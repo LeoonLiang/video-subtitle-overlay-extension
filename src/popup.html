@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Video Subtitle Overlay</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="popup">
+      <div class="popup-title">字幕插件</div>
+      <div class="popup-site-label">当前网站</div>
+      <div id="vso-popup-site" class="popup-site">读取中...</div>
+      <label class="popup-toggle" for="vso-popup-enabled">
+        <span>在当前网站启用</span>
+        <input id="vso-popup-enabled" type="checkbox">
+      </label>
+      <div id="vso-popup-status" class="popup-status"></div>
+    </main>
+    <script src="content-helpers.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

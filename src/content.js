@@ -14,12 +14,17 @@
     cues: [],
     settings: { ...DEFAULT_SETTINGS },
     panelOpen: false,
-    hoverLocked: false
+    hoverLocked: false,
+    siteEnabled: false
   };
   const helpers = globalThis.__VSO_HELPERS__ || {};
+  const SITE_STORAGE_KEY = helpers.SITE_STORAGE_KEY || "vso-enabled-sites";
   const resolveUiRoot = typeof helpers.resolveUiRoot === "function"
     ? helpers.resolveUiRoot
     : (doc) => doc.documentElement;
+  const isSiteEnabled = typeof helpers.isSiteEnabled === "function"
+    ? helpers.isSiteEnabled
+    : () => false;
   let currentUiRoot = null;
 
   const button = document.createElement("button");
@@ -78,7 +83,17 @@
   subtitleBox.className = "vso-subtitle-box";
   subtitleLayer.appendChild(subtitleBox);
 
+  function removeUi() {
+    button.remove();
+    panel.remove();
+    subtitleLayer.remove();
+    currentUiRoot = null;
+  }
+
   function syncUiRoot() {
+    if (!state.siteEnabled) {
+      return;
+    }
     const nextRoot = resolveUiRoot(document, state.activeVideo);
     if (!nextRoot || nextRoot === currentUiRoot) {
       return;
@@ -86,8 +101,6 @@
     nextRoot.append(button, panel, subtitleLayer);
     currentUiRoot = nextRoot;
   }
-
-  syncUiRoot();
 
   const ui = {
     fileInput: panel.querySelector("#vso-file-input"),
@@ -169,6 +182,42 @@
       };
       syncControls();
       renderSubtitle();
+    });
+  }
+
+  function applySiteEnabled(enabled) {
+    state.siteEnabled = enabled;
+
+    if (!enabled) {
+      state.panelOpen = false;
+      button.classList.add("vso-hidden");
+      panel.classList.add("vso-hidden");
+      subtitleLayer.classList.add("vso-hidden");
+      removeUi();
+      return;
+    }
+
+    syncUiRoot();
+    refreshActiveVideo();
+    positionButton();
+    renderSubtitle();
+  }
+
+  function loadSiteState() {
+    if (!hasChromeStorage) {
+      applySiteEnabled(false);
+      return;
+    }
+
+    chrome.storage.local.get(SITE_STORAGE_KEY, (result) => {
+      if (chrome.runtime?.lastError) {
+        applySiteEnabled(false);
+        return;
+      }
+
+      applySiteEnabled(
+        isSiteEnabled(result[SITE_STORAGE_KEY] || {}, window.location.href)
+      );
     });
   }
 
@@ -352,6 +401,9 @@
   }
 
   function positionButton() {
+    if (!state.siteEnabled) {
+      return;
+    }
     syncUiRoot();
     const video = state.activeVideo;
     const rect = video ? getVisibleRect(video) : null;
@@ -406,6 +458,11 @@
   }
 
   function renderSubtitle() {
+    if (!state.siteEnabled) {
+      subtitleBox.textContent = "";
+      subtitleLayer.classList.add("vso-hidden");
+      return;
+    }
     const video = state.activeVideo;
     if (!video || state.cues.length === 0) {
       subtitleBox.textContent = "";
@@ -496,6 +553,9 @@
   }
 
   function togglePanel(forceOpen) {
+    if (!state.siteEnabled) {
+      return;
+    }
     state.panelOpen = typeof forceOpen === "boolean" ? forceOpen : !state.panelOpen;
     panel.classList.toggle("vso-hidden", !state.panelOpen);
     if (state.panelOpen) {
@@ -619,6 +679,14 @@
     renderSubtitle();
   });
 
+  if (chrome.runtime?.onMessage) {
+    chrome.runtime.onMessage.addListener((message) => {
+      if (message?.type === "vso-site-status-changed") {
+        applySiteEnabled(Boolean(message.enabled));
+      }
+    });
+  }
+
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       mutation.addedNodes.forEach((node) => scanVideos(node));
@@ -637,5 +705,6 @@
   });
 
   loadSettings();
+  loadSiteState();
   scanVideos();
 })();

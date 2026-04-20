@@ -4,8 +4,12 @@
   "version": "1.0.0",
   "description": "Load local subtitle files and overlay subtitles on videos in any webpage.",
   "permissions": [
-    "storage"
+    "storage",
+    "tabs"
   ],
+  "action": {
+    "default_popup": "popup.html"
+  },
   "content_scripts": [
     {
       "matches": [
