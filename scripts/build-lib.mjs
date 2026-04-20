@@ -3,8 +3,10 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   rmdirSync,
+  writeFileSync,
   unlinkSync
 } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -17,6 +19,17 @@ export function getRootDir(importMetaUrl) {
 
 export function getReleaseArchiveName() {
   return "video-subtitle-overlay-extension.zip";
+}
+
+export function normalizeExtensionVersion(input) {
+  const rawValue = String(input || "").trim();
+  const normalized = rawValue.startsWith("v") ? rawValue.slice(1) : rawValue;
+
+  if (!/^\d+\.\d+\.\d+$/.test(normalized)) {
+    throw new Error(`Invalid extension version: ${input}`);
+  }
+
+  return normalized;
 }
 
 export function getProjectPaths(rootDir) {
@@ -99,4 +112,10 @@ export function createZipArchive(sourceDir, archivePath) {
   if (result.status !== 0) {
     throw new Error("zip command failed");
   }
+}
+
+export function updateManifestVersion(manifestPath, version) {
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  manifest.version = normalizeExtensionVersion(version);
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 }

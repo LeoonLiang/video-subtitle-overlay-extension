@@ -23,6 +23,8 @@ jobs:
           node-version: 20
 
       - name: Build and package release asset
+        env:
+          EXTENSION_VERSION: ${{ github.ref_name }}
         run: npm run package:release
 
       - name: Publish GitHub Release asset

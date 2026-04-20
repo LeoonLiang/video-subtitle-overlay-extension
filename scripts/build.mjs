@@ -3,7 +3,8 @@ import {
   ensureDir,
   getProjectPaths,
   getRootDir,
-  removePath
+  removePath,
+  updateManifestVersion
 } from "./build-lib.mjs";
 import { fileURLToPath } from "node:url";
 
@@ -18,6 +19,13 @@ export function build() {
   clean();
   ensureDir(paths.outDir);
   copyDirectoryContents(paths.srcDir, paths.outDir);
+
+  if (process.env.EXTENSION_VERSION) {
+    updateManifestVersion(
+      `${paths.outDir}/manifest.json`,
+      process.env.EXTENSION_VERSION
+    );
+  }
 
   console.log(`Built extension to ${paths.outDir}`);
 }
