@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Video Subtitle Overlay",
+  "version": "1.0.0",
+  "description": "Load local subtitle files and overlay subtitles on videos in any webpage.",
+  "permissions": [
+    "storage"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

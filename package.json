@@ -1,0 +1,10 @@
+{
+  "name": "video-subtitle-overlay-extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser extension that overlays local subtitles on webpage videos.",
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "clean": "node ./scripts/build.mjs --clean"
+  }
+}
