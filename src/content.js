@@ -16,6 +16,11 @@
     panelOpen: false,
     hoverLocked: false
   };
+  const helpers = globalThis.__VSO_HELPERS__ || {};
+  const resolveUiRoot = typeof helpers.resolveUiRoot === "function"
+    ? helpers.resolveUiRoot
+    : (doc) => doc.documentElement;
+  let currentUiRoot = null;
 
   const button = document.createElement("button");
   button.className = "vso-button vso-hidden";
@@ -73,7 +78,16 @@
   subtitleBox.className = "vso-subtitle-box";
   subtitleLayer.appendChild(subtitleBox);
 
-  document.documentElement.append(button, panel, subtitleLayer);
+  function syncUiRoot() {
+    const nextRoot = resolveUiRoot(document, state.activeVideo);
+    if (!nextRoot || nextRoot === currentUiRoot) {
+      return;
+    }
+    nextRoot.append(button, panel, subtitleLayer);
+    currentUiRoot = nextRoot;
+  }
+
+  syncUiRoot();
 
   const ui = {
     fileInput: panel.querySelector("#vso-file-input"),
@@ -338,6 +352,7 @@
   }
 
   function positionButton() {
+    syncUiRoot();
     const video = state.activeVideo;
     const rect = video ? getVisibleRect(video) : null;
     if (!video || !rect) {
@@ -418,6 +433,7 @@
     }
     state.activeVideo = video;
     attachVideoListeners(video);
+    syncUiRoot();
     positionButton();
     renderSubtitle();
   }
@@ -428,6 +444,7 @@
       setActiveVideo(best);
     } else {
       state.activeVideo = null;
+      syncUiRoot();
       positionButton();
     }
   }
@@ -586,6 +603,18 @@
   }, true);
 
   window.addEventListener("resize", () => {
+    positionButton();
+    renderSubtitle();
+  });
+
+  document.addEventListener("fullscreenchange", () => {
+    syncUiRoot();
+    positionButton();
+    renderSubtitle();
+  });
+
+  document.addEventListener("webkitfullscreenchange", () => {
+    syncUiRoot();
     positionButton();
     renderSubtitle();
   });

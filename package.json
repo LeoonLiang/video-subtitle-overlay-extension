@@ -5,6 +5,11 @@
   "description": "Browser extension that overlays local subtitles on webpage videos.",
   "scripts": {
     "build": "node ./scripts/build.mjs",
-    "clean": "node ./scripts/build.mjs --clean"
+    "clean": "node ./scripts/build.mjs --clean",
+    "package:release": "node ./scripts/package-release.mjs",
+    "test": "node ./tests/run-tests.mjs"
+  },
+  "engines": {
+    "node": ">=12.22.0"
   }
 }

@@ -47,10 +47,23 @@ npm run build
 构建后会生成：
 
 ```text
-/Users/leoon/Documents/New project/dist/chrome
+/Users/leoon/Documents/video-subtitle-overlay-extension/dist/chrome
 ```
 
 Chrome 或 Edge 里加载扩展时，选择这个 `dist/chrome` 目录。
+
+## Release 安装
+
+如果你是从 GitHub Release 下载插件：
+
+1. 下载 `video-subtitle-overlay-extension.zip`
+2. 先解压 zip 文件
+3. 打开 Chrome 或 Edge 的扩展管理页
+4. 打开“开发者模式”
+5. 选择“加载已解压的扩展程序”
+6. 选择解压后的目录
+
+不要直接选择 zip 文件本身，必须先解压后再加载。
 
 ## 使用方式
 
@@ -58,19 +71,20 @@ Chrome 或 Edge 里加载扩展时，选择这个 `dist/chrome` 目录。
 2. 打开扩展管理页
 3. 打开“开发者模式”
 4. 选择“加载已解压的扩展程序”
-5. 选择 `/Users/leoon/Documents/New project/dist/chrome`
+5. 选择 `/Users/leoon/Documents/video-subtitle-overlay-extension/dist/chrome`
 6. 打开任意带有 `video` 的网页
 7. 鼠标移动到视频区域，点击右上角“字幕”按钮
 8. 选择本地字幕文件并调整样式或延迟
 
 ## Git
 
-当前目录已经是一个 Git 仓库。现在这个结构适合直接提交：
+当前目录已经是一个 Git 仓库。发布时不需要提交 `dist/`，推荐通过 GitHub Release 下载打包产物。
 
-```bash
-git add .
-git commit -m "feat: add video subtitle overlay browser extension"
-```
+推送版本 tag 后，GitHub Actions 会自动：
+
+- 执行 `npm run package:release`
+- 生成 `dist/release/video-subtitle-overlay-extension.zip`
+- 上传到对应的 GitHub Release
 
 `.gitignore` 已忽略：
 

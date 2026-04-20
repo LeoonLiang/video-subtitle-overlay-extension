@@ -12,6 +12,7 @@
         "<all_urls>"
       ],
       "js": [
+        "content-helpers.js",
         "content.js"
       ],
       "css": [

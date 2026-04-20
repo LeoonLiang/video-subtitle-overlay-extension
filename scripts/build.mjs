@@ -1,36 +1,32 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import {
+  copyDirectoryContents,
+  ensureDir,
+  getProjectPaths,
+  getRootDir,
+  removePath
+} from "./build-lib.mjs";
 import { fileURLToPath } from "node:url";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const rootDir = resolve(__dirname, "..");
-const srcDir = resolve(rootDir, "src");
-const outDir = resolve(rootDir, "dist", "chrome");
+const rootDir = getRootDir(import.meta.url);
+const paths = getProjectPaths(rootDir);
 
-function ensureDir(dirPath) {
-  if (!existsSync(dirPath)) {
-    mkdirSync(dirPath, { recursive: true });
-  }
+export function clean() {
+  removePath(paths.distDir);
 }
 
-function clean() {
-  rmSync(resolve(rootDir, "dist"), { recursive: true, force: true });
-}
-
-function build() {
+export function build() {
   clean();
-  ensureDir(outDir);
+  ensureDir(paths.outDir);
+  copyDirectoryContents(paths.srcDir, paths.outDir);
 
-  for (const entry of readdirSync(srcDir)) {
-    cpSync(resolve(srcDir, entry), resolve(outDir, entry), { recursive: true });
-  }
-
-  console.log(`Built extension to ${outDir}`);
+  console.log(`Built extension to ${paths.outDir}`);
 }
 
-if (process.argv.includes("--clean")) {
-  clean();
-  console.log("Cleaned dist directory");
-} else {
-  build();
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  if (process.argv.includes("--clean")) {
+    clean();
+    console.log("Cleaned dist directory");
+  } else {
+    build();
+  }
 }

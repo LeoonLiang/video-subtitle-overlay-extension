@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build and package release asset
+        run: npm run package:release
+
+      - name: Publish GitHub Release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/release/video-subtitle-overlay-extension.zip
+          generate_release_notes: true
+          body: |
+            安装方式：
+            1. 下载 `video-subtitle-overlay-extension.zip`
+            2. 先解压 zip 文件
+            3. 在 Chrome 或 Edge 扩展管理页选择“加载已解压的扩展程序”
+            4. 选择解压后的目录
