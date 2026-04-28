@@ -82,6 +82,29 @@
     return /Cannot find menu item with id/i.test(String(message || ""));
   }
 
+  function getSubtitleFilenameFromUrl(url) {
+    if (!url) {
+      return "remote-subtitle.srt";
+    }
+
+    try {
+      const parsedUrl = new URL(url);
+      const pathname = parsedUrl.pathname || "";
+      const rawName = pathname.split("/").pop() || "";
+      const decodedName = decodeURIComponent(rawName).trim();
+      return decodedName || "remote-subtitle.srt";
+    } catch (error) {
+      return "remote-subtitle.srt";
+    }
+  }
+
+  function formatDelayLabel(delayMs) {
+    const safeDelayMs = Number.isFinite(delayMs) ? delayMs : 0;
+    const seconds = safeDelayMs / 1000;
+    const sign = seconds > 0 ? "+" : "";
+    return `${sign}${seconds.toFixed(1)}s`;
+  }
+
   globalObject.__VSO_HELPERS__ = Object.assign(
     {},
     globalObject.__VSO_HELPERS__,
@@ -93,7 +116,9 @@
       isSiteEnabled,
       setSiteEnabled,
       supportsDynamicMenuTitle,
-      shouldIgnoreMissingMenuError
+      shouldIgnoreMissingMenuError,
+      getSubtitleFilenameFromUrl,
+      formatDelayLabel
     }
   );
 })(globalThis);

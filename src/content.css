@@ -65,7 +65,7 @@
 }
 
 .vso-file,
-.vso-number {
+.vso-text-input {
   width: 100%;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 10px;
@@ -80,6 +80,22 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.vso-source-row,
+.vso-delay-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.vso-delay-value {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.vso-delay-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .vso-color {
@@ -126,6 +142,11 @@
 .vso-action-secondary {
   background: rgba(255, 255, 255, 0.08);
   color: #fff;
+}
+
+.vso-action:disabled {
+  opacity: 0.55;
+  cursor: wait;
 }
 
 .vso-status {

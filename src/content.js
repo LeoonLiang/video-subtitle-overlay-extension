@@ -7,6 +7,7 @@
     fontSize: 28,
     delayMs: 0
   };
+  const DELAY_STEP_MS = 500;
 
   const state = {
     videos: new Set(),
@@ -25,6 +26,14 @@
   const isSiteEnabled = typeof helpers.isSiteEnabled === "function"
     ? helpers.isSiteEnabled
     : () => false;
+  const getSubtitleFilenameFromUrl =
+    typeof helpers.getSubtitleFilenameFromUrl === "function"
+      ? helpers.getSubtitleFilenameFromUrl
+      : () => "remote-subtitle.srt";
+  const formatDelayLabel =
+    typeof helpers.formatDelayLabel === "function"
+      ? helpers.formatDelayLabel
+      : (delayMs) => `${delayMs / 1000}s`;
   let currentUiRoot = null;
 
   const button = document.createElement("button");
@@ -40,6 +49,13 @@
       <div class="vso-field">
         <label for="vso-file-input">加载本地字幕</label>
         <input id="vso-file-input" class="vso-file" type="file" accept=".srt,.vtt,.ass,.ssa,.json,text/plain">
+      </div>
+      <div class="vso-field">
+        <label for="vso-url-input">加载在线字幕</label>
+        <div class="vso-source-row">
+          <input id="vso-url-input" class="vso-text-input" type="url" placeholder="https://example.com/subtitle.srt">
+          <button id="vso-url-load" class="vso-action vso-action-primary" type="button">加载链接</button>
+        </div>
       </div>
       <div class="vso-color-row">
         <div class="vso-field">
@@ -66,15 +82,19 @@
         </div>
       </div>
       <div class="vso-field">
-        <label for="vso-delay">字幕延迟（毫秒，可为负数）</label>
-        <input id="vso-delay" class="vso-number" type="number" step="50">
+        <span>字幕时序微调</span>
+        <div class="vso-delay-row">
+          <button id="vso-delay-earlier" class="vso-action vso-action-secondary" type="button">字幕提前 0.5s</button>
+          <button id="vso-delay-later" class="vso-action vso-action-secondary" type="button">字幕延后 0.5s</button>
+        </div>
+        <div id="vso-delay-value" class="vso-delay-value">当前偏移：0.0s</div>
       </div>
       <div class="vso-action-row">
         <button id="vso-hide-subtitles" class="vso-action vso-action-secondary" type="button">隐藏字幕</button>
         <button id="vso-reset" class="vso-action vso-action-primary" type="button">恢复默认</button>
       </div>
     </div>
-    <div id="vso-status" class="vso-status">未加载字幕文件</div>
+    <div id="vso-status" class="vso-status">未加载字幕</div>
   `;
 
   const subtitleLayer = document.createElement("div");
@@ -104,13 +124,17 @@
 
   const ui = {
     fileInput: panel.querySelector("#vso-file-input"),
+    urlInput: panel.querySelector("#vso-url-input"),
+    urlLoadButton: panel.querySelector("#vso-url-load"),
     textColor: panel.querySelector("#vso-text-color"),
     bgColor: panel.querySelector("#vso-bg-color"),
     bgOpacity: panel.querySelector("#vso-bg-opacity"),
     bgOpacityValue: panel.querySelector("#vso-bg-opacity-value"),
     fontSize: panel.querySelector("#vso-font-size"),
     fontSizeValue: panel.querySelector("#vso-font-size-value"),
-    delay: panel.querySelector("#vso-delay"),
+    delayEarlierButton: panel.querySelector("#vso-delay-earlier"),
+    delayLaterButton: panel.querySelector("#vso-delay-later"),
+    delayValue: panel.querySelector("#vso-delay-value"),
     hideButton: panel.querySelector("#vso-hide-subtitles"),
     resetButton: panel.querySelector("#vso-reset"),
     status: panel.querySelector("#vso-status")
@@ -162,7 +186,7 @@
     )}%`;
     ui.fontSize.value = String(state.settings.fontSize);
     ui.fontSizeValue.textContent = `${state.settings.fontSize}px`;
-    ui.delay.value = String(state.settings.delayMs);
+    ui.delayValue.textContent = `当前偏移：${formatDelayLabel(state.settings.delayMs)}`;
     updateSubtitleStyles();
   }
 
@@ -565,7 +589,15 @@
 
   async function loadSubtitleFile(file) {
     const content = await file.text();
-    const cues = parseSubtitleFile(file.name, content)
+    return loadSubtitleContent(
+      file.name,
+      content,
+      (cueCount) => `已加载 ${file.name}，共 ${cueCount} 条字幕`
+    );
+  }
+
+  function loadSubtitleContent(sourceName, content, buildSuccessMessage) {
+    const cues = parseSubtitleFile(sourceName, content)
       .filter((cue) => cue.end >= cue.start)
       .sort((a, b) => a.start - b.start);
 
@@ -574,7 +606,63 @@
     }
 
     state.cues = cues;
-    setStatus(`已加载 ${file.name}，共 ${cues.length} 条字幕`);
+    setStatus(buildSuccessMessage(cues.length));
+    renderSubtitle();
+    return cues;
+  }
+
+  function requestSubtitleDownload(url) {
+    return new Promise((resolve, reject) => {
+      if (!chrome.runtime?.sendMessage) {
+        reject(new Error("后台下载不可用"));
+        return;
+      }
+
+      chrome.runtime.sendMessage(
+        {
+          type: "vso-download-subtitle",
+          url
+        },
+        (response) => {
+          if (chrome.runtime?.lastError) {
+            reject(new Error(chrome.runtime.lastError.message || "后台下载失败"));
+            return;
+          }
+
+          if (!response?.ok) {
+            reject(new Error(response?.error || "下载字幕失败"));
+            return;
+          }
+
+          resolve(response.content);
+        }
+      );
+    });
+  }
+
+  async function loadSubtitleUrl(url) {
+    const trimmedUrl = String(url || "").trim();
+
+    if (!trimmedUrl) {
+      throw new Error("请输入字幕链接");
+    }
+
+    setStatus("正在下载字幕...");
+    const content = await requestSubtitleDownload(trimmedUrl);
+    const sourceName = getSubtitleFilenameFromUrl(trimmedUrl);
+
+    return loadSubtitleContent(
+      sourceName,
+      content,
+      (cueCount) => `已加载在线字幕 ${sourceName}，共 ${cueCount} 条字幕`
+    );
+  }
+
+  function adjustDelay(deltaMs) {
+    state.settings.delayMs += deltaMs;
+    syncControls();
+    saveSettings();
+    setStatus(`当前字幕偏移 ${formatDelayLabel(state.settings.delayMs)}`);
     renderSubtitle();
   }
 
@@ -582,6 +670,7 @@
     state.settings = { ...DEFAULT_SETTINGS };
     syncControls();
     saveSettings();
+    setStatus(`当前字幕偏移 ${formatDelayLabel(state.settings.delayMs)}`);
     renderSubtitle();
   }
 
@@ -614,6 +703,25 @@
     }
   });
 
+  ui.urlLoadButton.addEventListener("click", async () => {
+    ui.urlLoadButton.disabled = true;
+
+    try {
+      await loadSubtitleUrl(ui.urlInput.value);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "在线字幕加载失败");
+    } finally {
+      ui.urlLoadButton.disabled = false;
+    }
+  });
+
+  ui.urlInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      ui.urlLoadButton.click();
+    }
+  });
+
   ui.textColor.addEventListener("input", () => {
     state.settings.textColor = ui.textColor.value;
     updateSubtitleStyles();
@@ -641,11 +749,12 @@
     renderSubtitle();
   });
 
-  ui.delay.addEventListener("change", () => {
-    state.settings.delayMs = Number.parseInt(ui.delay.value || "0", 10) || 0;
-    saveSettings();
-    setStatus(`当前字幕延迟 ${state.settings.delayMs}ms，预览时间 ${formatTime(Math.max(0, state.settings.delayMs / 1000))}`);
-    renderSubtitle();
+  ui.delayEarlierButton.addEventListener("click", () => {
+    adjustDelay(-DELAY_STEP_MS);
+  });
+
+  ui.delayLaterButton.addEventListener("click", () => {
+    adjustDelay(DELAY_STEP_MS);
   });
 
   ui.hideButton.addEventListener("click", () => {
