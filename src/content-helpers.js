@@ -105,6 +105,58 @@
     return `${sign}${seconds.toFixed(1)}s`;
   }
 
+  function getPreviewTime(currentTime, delayMs) {
+    const safeCurrentTime = Number.isFinite(currentTime) ? currentTime : 0;
+    const safeDelayMs = Number.isFinite(delayMs) ? delayMs : 0;
+    return safeCurrentTime + safeDelayMs / 1000;
+  }
+
+  function getSeekTimeForCue(cueStart, delayMs) {
+    const safeCueStart = Number.isFinite(cueStart) ? cueStart : 0;
+    const safeDelayMs = Number.isFinite(delayMs) ? delayMs : 0;
+    return Math.max(0, safeCueStart - safeDelayMs / 1000);
+  }
+
+  function findCueIndexAtTime(cues, time) {
+    if (!Array.isArray(cues) || cues.length === 0) {
+      return -1;
+    }
+
+    let left = 0;
+    let right = cues.length - 1;
+
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+      const cue = cues[mid];
+
+      if (time < cue.start) {
+        right = mid - 1;
+      } else if (time > cue.end) {
+        left = mid + 1;
+      } else {
+        return mid;
+      }
+    }
+
+    return -1;
+  }
+
+  function getPreviewViewState({ cues, activeCueIndex, autoFollow }) {
+    if (!Array.isArray(cues) || cues.length === 0) {
+      return {
+        mode: "empty",
+        activeCueIndex: -1,
+        showResumeButton: false
+      };
+    }
+
+    return {
+      mode: "list",
+      activeCueIndex: Number.isInteger(activeCueIndex) ? activeCueIndex : -1,
+      showResumeButton: autoFollow === false
+    };
+  }
+
   globalObject.__VSO_HELPERS__ = Object.assign(
     {},
     globalObject.__VSO_HELPERS__,
@@ -118,7 +170,11 @@
       supportsDynamicMenuTitle,
       shouldIgnoreMissingMenuError,
       getSubtitleFilenameFromUrl,
-      formatDelayLabel
+      formatDelayLabel,
+      getPreviewTime,
+      getSeekTimeForCue,
+      findCueIndexAtTime,
+      getPreviewViewState
     }
   );
 })(globalThis);

@@ -48,6 +48,33 @@
   font-weight: 700;
 }
 
+.vso-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.vso-tab {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.vso-tab-active {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.vso-tab-panel {
+  display: block;
+}
+
 .vso-grid {
   display: grid;
   gap: 10px;
@@ -154,6 +181,91 @@
   margin-top: 8px;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.72);
+}
+
+.vso-preview-header,
+.vso-preview-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.vso-preview-header {
+  margin-bottom: 10px;
+}
+
+.vso-preview-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.vso-preview-resume {
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.vso-preview-empty {
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  color: rgba(255, 255, 255, 0.68);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.vso-preview-list {
+  max-height: 240px;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  padding-right: 4px;
+  margin-bottom: 10px;
+}
+
+.vso-preview-item {
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+.vso-preview-item:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.vso-preview-item-active {
+  border-color: rgba(248, 250, 252, 0.95);
+  background: rgba(248, 250, 252, 0.12);
+  transform: translateY(-1px);
+}
+
+.vso-preview-time {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.vso-preview-text {
+  font-size: 13px;
+  line-height: 1.45;
+  color: #fff;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .vso-subtitle-layer {

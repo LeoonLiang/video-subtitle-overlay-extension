@@ -15,8 +15,14 @@
     cues: [],
     settings: { ...DEFAULT_SETTINGS },
     panelOpen: false,
+    panelTab: "settings",
     hoverLocked: false,
-    siteEnabled: false
+    siteEnabled: false,
+    activeCueIndex: -1,
+    previewAutoFollow: true,
+    previewItems: [],
+    previewIgnoreScroll: false,
+    previewIgnoreTimer: 0
   };
   const helpers = globalThis.__VSO_HELPERS__ || {};
   const SITE_STORAGE_KEY = helpers.SITE_STORAGE_KEY || "vso-enabled-sites";
@@ -34,6 +40,26 @@
     typeof helpers.formatDelayLabel === "function"
       ? helpers.formatDelayLabel
       : (delayMs) => `${delayMs / 1000}s`;
+  const getPreviewTime =
+    typeof helpers.getPreviewTime === "function"
+      ? helpers.getPreviewTime
+      : (currentTime, delayMs) => currentTime + delayMs / 1000;
+  const getSeekTimeForCue =
+    typeof helpers.getSeekTimeForCue === "function"
+      ? helpers.getSeekTimeForCue
+      : (cueStart, delayMs) => Math.max(0, cueStart - delayMs / 1000);
+  const findCueIndexAtTime =
+    typeof helpers.findCueIndexAtTime === "function"
+      ? helpers.findCueIndexAtTime
+      : () => -1;
+  const getPreviewViewState =
+    typeof helpers.getPreviewViewState === "function"
+      ? helpers.getPreviewViewState
+      : ({ cues, activeCueIndex, autoFollow }) => ({
+        mode: Array.isArray(cues) && cues.length > 0 ? "list" : "empty",
+        activeCueIndex,
+        showResumeButton: autoFollow === false
+      });
   let currentUiRoot = null;
 
   const button = document.createElement("button");
@@ -45,53 +71,71 @@
   panel.className = "vso-panel vso-hidden";
   panel.innerHTML = `
     <div class="vso-panel-title">字幕设置</div>
-    <div class="vso-grid">
-      <div class="vso-field">
-        <label for="vso-file-input">加载本地字幕</label>
-        <input id="vso-file-input" class="vso-file" type="file" accept=".srt,.vtt,.ass,.ssa,.json,text/plain">
-      </div>
-      <div class="vso-field">
-        <label for="vso-url-input">加载在线字幕</label>
-        <div class="vso-source-row">
-          <input id="vso-url-input" class="vso-text-input" type="url" placeholder="https://example.com/subtitle.srt">
-          <button id="vso-url-load" class="vso-action vso-action-primary" type="button">加载链接</button>
-        </div>
-      </div>
-      <div class="vso-color-row">
+    <div class="vso-tabs" role="tablist" aria-label="字幕面板">
+      <button id="vso-tab-settings" class="vso-tab vso-tab-active" type="button" role="tab" aria-selected="true">设置</button>
+      <button id="vso-tab-preview" class="vso-tab" type="button" role="tab" aria-selected="false">预览</button>
+    </div>
+    <div id="vso-panel-settings" class="vso-tab-panel">
+      <div class="vso-grid">
         <div class="vso-field">
-          <label for="vso-text-color">字体颜色</label>
-          <input id="vso-text-color" class="vso-color" type="color">
+          <label for="vso-file-input">加载本地字幕</label>
+          <input id="vso-file-input" class="vso-file" type="file" accept=".srt,.vtt,.ass,.ssa,.json,text/plain">
         </div>
         <div class="vso-field">
-          <label for="vso-bg-color">背景颜色</label>
-          <input id="vso-bg-color" class="vso-color" type="color">
+          <label for="vso-url-input">加载在线字幕</label>
+          <div class="vso-source-row">
+            <input id="vso-url-input" class="vso-text-input" type="url" placeholder="https://example.com/subtitle.srt">
+            <button id="vso-url-load" class="vso-action vso-action-primary" type="button">加载链接</button>
+          </div>
+        </div>
+        <div class="vso-color-row">
+          <div class="vso-field">
+            <label for="vso-text-color">字体颜色</label>
+            <input id="vso-text-color" class="vso-color" type="color">
+          </div>
+          <div class="vso-field">
+            <label for="vso-bg-color">背景颜色</label>
+            <input id="vso-bg-color" class="vso-color" type="color">
+          </div>
+        </div>
+        <div class="vso-field">
+          <span>背景透明度</span>
+          <div class="vso-range-row">
+            <input id="vso-bg-opacity" class="vso-range" type="range" min="0" max="1" step="0.05">
+            <span id="vso-bg-opacity-value" class="vso-range-value"></span>
+          </div>
+        </div>
+        <div class="vso-field">
+          <span>字体大小</span>
+          <div class="vso-range-row">
+            <input id="vso-font-size" class="vso-range" type="range" min="16" max="64" step="1">
+            <span id="vso-font-size-value" class="vso-range-value"></span>
+          </div>
+        </div>
+        <div class="vso-field">
+          <span>字幕时序微调</span>
+          <div class="vso-delay-row">
+            <button id="vso-delay-earlier" class="vso-action vso-action-secondary" type="button">字幕提前 0.5s</button>
+            <button id="vso-delay-later" class="vso-action vso-action-secondary" type="button">字幕延后 0.5s</button>
+          </div>
+          <div id="vso-delay-value" class="vso-delay-value">当前偏移：0.0s</div>
+        </div>
+        <div class="vso-action-row">
+          <button id="vso-hide-subtitles" class="vso-action vso-action-secondary" type="button">隐藏字幕</button>
+          <button id="vso-reset" class="vso-action vso-action-primary" type="button">恢复默认</button>
         </div>
       </div>
-      <div class="vso-field">
-        <span>背景透明度</span>
-        <div class="vso-range-row">
-          <input id="vso-bg-opacity" class="vso-range" type="range" min="0" max="1" step="0.05">
-          <span id="vso-bg-opacity-value" class="vso-range-value"></span>
-        </div>
+    </div>
+    <div id="vso-panel-preview" class="vso-tab-panel vso-hidden">
+      <div class="vso-preview-header">
+        <div class="vso-preview-title">当前字幕时间线</div>
+        <button id="vso-preview-resume" class="vso-action vso-action-secondary vso-preview-resume vso-hidden" type="button">恢复跟随</button>
       </div>
-      <div class="vso-field">
-        <span>字体大小</span>
-        <div class="vso-range-row">
-          <input id="vso-font-size" class="vso-range" type="range" min="16" max="64" step="1">
-          <span id="vso-font-size-value" class="vso-range-value"></span>
-        </div>
-      </div>
-      <div class="vso-field">
-        <span>字幕时序微调</span>
-        <div class="vso-delay-row">
-          <button id="vso-delay-earlier" class="vso-action vso-action-secondary" type="button">字幕提前 0.5s</button>
-          <button id="vso-delay-later" class="vso-action vso-action-secondary" type="button">字幕延后 0.5s</button>
-        </div>
-        <div id="vso-delay-value" class="vso-delay-value">当前偏移：0.0s</div>
-      </div>
-      <div class="vso-action-row">
-        <button id="vso-hide-subtitles" class="vso-action vso-action-secondary" type="button">隐藏字幕</button>
-        <button id="vso-reset" class="vso-action vso-action-primary" type="button">恢复默认</button>
+      <div id="vso-preview-empty" class="vso-preview-empty">加载字幕后可在这里查看同步时间线。</div>
+      <div id="vso-preview-list" class="vso-preview-list vso-hidden"></div>
+      <div class="vso-preview-footer">
+        <button id="vso-preview-earlier" class="vso-action vso-action-secondary" type="button">提前 0.5s</button>
+        <button id="vso-preview-later" class="vso-action vso-action-secondary" type="button">延后 0.5s</button>
       </div>
     </div>
     <div id="vso-status" class="vso-status">未加载字幕</div>
@@ -123,6 +167,10 @@
   }
 
   const ui = {
+    tabSettings: panel.querySelector("#vso-tab-settings"),
+    tabPreview: panel.querySelector("#vso-tab-preview"),
+    settingsPanel: panel.querySelector("#vso-panel-settings"),
+    previewPanel: panel.querySelector("#vso-panel-preview"),
     fileInput: panel.querySelector("#vso-file-input"),
     urlInput: panel.querySelector("#vso-url-input"),
     urlLoadButton: panel.querySelector("#vso-url-load"),
@@ -134,7 +182,12 @@
     fontSizeValue: panel.querySelector("#vso-font-size-value"),
     delayEarlierButton: panel.querySelector("#vso-delay-earlier"),
     delayLaterButton: panel.querySelector("#vso-delay-later"),
+    previewEarlierButton: panel.querySelector("#vso-preview-earlier"),
+    previewLaterButton: panel.querySelector("#vso-preview-later"),
     delayValue: panel.querySelector("#vso-delay-value"),
+    previewResumeButton: panel.querySelector("#vso-preview-resume"),
+    previewEmpty: panel.querySelector("#vso-preview-empty"),
+    previewList: panel.querySelector("#vso-preview-list"),
     hideButton: panel.querySelector("#vso-hide-subtitles"),
     resetButton: panel.querySelector("#vso-reset"),
     status: panel.querySelector("#vso-status")
@@ -188,6 +241,20 @@
     ui.fontSizeValue.textContent = `${state.settings.fontSize}px`;
     ui.delayValue.textContent = `当前偏移：${formatDelayLabel(state.settings.delayMs)}`;
     updateSubtitleStyles();
+  }
+
+  function setPanelTab(tab) {
+    state.panelTab = tab === "preview" ? "preview" : "settings";
+    const showingPreview = state.panelTab === "preview";
+    ui.tabSettings.classList.toggle("vso-tab-active", !showingPreview);
+    ui.tabPreview.classList.toggle("vso-tab-active", showingPreview);
+    ui.tabSettings.setAttribute("aria-selected", String(!showingPreview));
+    ui.tabPreview.setAttribute("aria-selected", String(showingPreview));
+    ui.settingsPanel.classList.toggle("vso-hidden", showingPreview);
+    ui.previewPanel.classList.toggle("vso-hidden", !showingPreview);
+    if (showingPreview) {
+      renderPreview(true);
+    }
   }
 
   function loadSettings() {
@@ -464,33 +531,125 @@
     subtitleLayer.style.height = `${Math.max(0, rect.height)}px`;
   }
 
-  function findCurrentCue(time) {
-    let left = 0;
-    let right = state.cues.length - 1;
-    while (left <= right) {
-      const mid = Math.floor((left + right) / 2);
-      const cue = state.cues[mid];
-      if (time < cue.start) {
-        right = mid - 1;
-      } else if (time > cue.end) {
-        left = mid + 1;
-      } else {
-        return cue;
-      }
+  function buildPreviewList() {
+    ui.previewList.textContent = "";
+    state.previewItems = state.cues.map((cue) => {
+      const row = document.createElement("button");
+      row.className = "vso-preview-item";
+      row.type = "button";
+
+      const time = document.createElement("div");
+      time.className = "vso-preview-time";
+      time.textContent = formatTime(cue.start).slice(3, 8);
+
+      const text = document.createElement("div");
+      text.className = "vso-preview-text";
+      text.textContent = cue.text;
+
+      row.addEventListener("click", () => {
+        if (!state.activeVideo) {
+          setStatus("当前没有可跳转的视频");
+          return;
+        }
+
+        const targetTime = getSeekTimeForCue(cue.start, state.settings.delayMs);
+        state.activeVideo.currentTime = targetTime;
+        setStatus(`已跳转到 ${formatTime(targetTime)}`);
+        renderSubtitle();
+      });
+
+      row.append(time, text);
+      ui.previewList.appendChild(row);
+      return row;
+    });
+  }
+
+  function markPreviewActiveCue() {
+    state.previewItems.forEach((item, index) => {
+      item.classList.toggle("vso-preview-item-active", index === state.activeCueIndex);
+    });
+  }
+
+  function setPreviewAutoFollow(enabled) {
+    state.previewAutoFollow = enabled;
+    ui.previewResumeButton.classList.toggle("vso-hidden", enabled);
+  }
+
+  function syncPreviewScroll(force = false) {
+    if (state.panelTab !== "preview" || (!force && !state.previewAutoFollow)) {
+      return;
     }
-    return null;
+
+    const activeItem = state.previewItems[state.activeCueIndex];
+    if (!activeItem) {
+      return;
+    }
+
+    const targetTop = Math.max(
+      0,
+      activeItem.offsetTop - ui.previewList.clientHeight / 2 + activeItem.offsetHeight / 2
+    );
+
+    state.previewIgnoreScroll = true;
+    window.clearTimeout(state.previewIgnoreTimer);
+
+    if (typeof ui.previewList.scrollTo === "function") {
+      ui.previewList.scrollTo({
+        top: targetTop,
+        behavior: force ? "smooth" : "auto"
+      });
+    } else {
+      ui.previewList.scrollTop = targetTop;
+    }
+
+    state.previewIgnoreTimer = window.setTimeout(() => {
+      state.previewIgnoreScroll = false;
+    }, 120);
+  }
+
+  function renderPreview(forceScroll = false) {
+    const viewState = getPreviewViewState({
+      cues: state.cues,
+      activeCueIndex: state.activeCueIndex,
+      autoFollow: state.previewAutoFollow
+    });
+
+    if (state.previewItems.length !== state.cues.length) {
+      buildPreviewList();
+    }
+
+    const isEmpty = viewState.mode === "empty";
+    ui.previewEmpty.classList.toggle("vso-hidden", !isEmpty);
+    ui.previewList.classList.toggle("vso-hidden", isEmpty);
+    ui.previewResumeButton.classList.toggle(
+      "vso-hidden",
+      isEmpty || viewState.showResumeButton === false
+    );
+
+    if (isEmpty) {
+      return;
+    }
+
+    markPreviewActiveCue();
+    if (forceScroll || state.previewAutoFollow) {
+      syncPreviewScroll(forceScroll);
+    }
   }
 
   function renderSubtitle() {
     if (!state.siteEnabled) {
       subtitleBox.textContent = "";
       subtitleLayer.classList.add("vso-hidden");
+      state.activeCueIndex = -1;
+      renderPreview();
       return;
     }
     const video = state.activeVideo;
     if (!video || state.cues.length === 0) {
       subtitleBox.textContent = "";
       subtitleLayer.classList.add("vso-hidden");
+      state.activeCueIndex = -1;
+      renderPreview();
       return;
     }
 
@@ -498,13 +657,17 @@
     if (!rect) {
       subtitleBox.textContent = "";
       subtitleLayer.classList.add("vso-hidden");
+      state.activeCueIndex = -1;
+      renderPreview();
       return;
     }
 
-    const time = video.currentTime + state.settings.delayMs / 1000;
-    const cue = findCurrentCue(time);
+    const time = getPreviewTime(video.currentTime, state.settings.delayMs);
+    state.activeCueIndex = findCueIndexAtTime(state.cues, time);
+    const cue = state.activeCueIndex >= 0 ? state.cues[state.activeCueIndex] : null;
     subtitleBox.textContent = cue ? cue.text : "";
     subtitleLayer.classList.toggle("vso-hidden", !cue);
+    renderPreview();
     positionButton();
   }
 
@@ -527,6 +690,7 @@
       state.activeVideo = null;
       syncUiRoot();
       positionButton();
+      renderSubtitle();
     }
   }
 
@@ -584,6 +748,7 @@
     panel.classList.toggle("vso-hidden", !state.panelOpen);
     if (state.panelOpen) {
       positionButton();
+      renderPreview(true);
     }
   }
 
@@ -606,6 +771,9 @@
     }
 
     state.cues = cues;
+    state.activeCueIndex = -1;
+    state.previewAutoFollow = true;
+    buildPreviewList();
     setStatus(buildSuccessMessage(cues.length));
     renderSubtitle();
     return cues;
@@ -757,11 +925,45 @@
     adjustDelay(DELAY_STEP_MS);
   });
 
+  ui.previewEarlierButton.addEventListener("click", () => {
+    adjustDelay(-DELAY_STEP_MS);
+  });
+
+  ui.previewLaterButton.addEventListener("click", () => {
+    adjustDelay(DELAY_STEP_MS);
+  });
+
+  ui.tabSettings.addEventListener("click", () => {
+    setPanelTab("settings");
+  });
+
+  ui.tabPreview.addEventListener("click", () => {
+    setPanelTab("preview");
+  });
+
+  ui.previewResumeButton.addEventListener("click", () => {
+    setPreviewAutoFollow(true);
+    renderPreview(true);
+  });
+
+  ui.previewList.addEventListener("scroll", () => {
+    if (state.previewIgnoreScroll || !state.previewAutoFollow) {
+      return;
+    }
+    setPreviewAutoFollow(false);
+    renderPreview();
+  });
+
   ui.hideButton.addEventListener("click", () => {
     state.cues = [];
+    state.activeCueIndex = -1;
+    state.previewItems = [];
+    state.previewAutoFollow = true;
+    ui.previewList.textContent = "";
     subtitleBox.textContent = "";
     subtitleLayer.classList.add("vso-hidden");
     setStatus("字幕已隐藏");
+    renderPreview();
   });
 
   ui.resetButton.addEventListener("click", resetSettings);
@@ -816,4 +1018,5 @@
   loadSettings();
   loadSiteState();
   scanVideos();
+  setPanelTab("settings");
 })();
