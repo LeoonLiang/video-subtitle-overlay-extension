@@ -4,7 +4,7 @@
     textColor: "#ffffff",
     backgroundColor: "#000000",
     backgroundOpacity: 0.55,
-    fontSize: 28,
+    fontSize: 16,
     delayMs: 0
   };
   const DELAY_STEP_MS = 500;
@@ -22,7 +22,16 @@
     previewAutoFollow: true,
     previewItems: [],
     previewIgnoreScroll: false,
-    previewIgnoreTimer: 0
+    previewIgnoreTimer: 0,
+    searchKeyword: "",
+    searchResults: [],
+    expandedResultUrl: "",
+    searchLoading: false,
+    searchError: "",
+    languageOptionsByUrl: {},
+    languageErrorByUrl: {},
+    languageLoadingUrl: "",
+    downloadingLanguageUrl: ""
   };
   const helpers = globalThis.__VSO_HELPERS__ || {};
   const SITE_STORAGE_KEY = helpers.SITE_STORAGE_KEY || "vso-enabled-sites";
@@ -72,22 +81,37 @@
   panel.innerHTML = `
     <div class="vso-panel-title">字幕设置</div>
     <div class="vso-tabs" role="tablist" aria-label="字幕面板">
-      <button id="vso-tab-settings" class="vso-tab vso-tab-active" type="button" role="tab" aria-selected="true">设置</button>
+      <button id="vso-tab-load" class="vso-tab vso-tab-active" type="button" role="tab" aria-selected="true">加载</button>
+      <button id="vso-tab-settings" class="vso-tab" type="button" role="tab" aria-selected="false">设置</button>
       <button id="vso-tab-preview" class="vso-tab" type="button" role="tab" aria-selected="false">预览</button>
     </div>
-    <div id="vso-panel-settings" class="vso-tab-panel">
+    <div id="vso-panel-load" class="vso-tab-panel">
       <div class="vso-grid">
         <div class="vso-field">
           <label for="vso-file-input">加载本地字幕</label>
           <input id="vso-file-input" class="vso-file" type="file" accept=".srt,.vtt,.ass,.ssa,.json,text/plain">
         </div>
         <div class="vso-field">
-          <label for="vso-url-input">加载在线字幕</label>
+          <label for="vso-search-input">搜索字幕</label>
           <div class="vso-source-row">
-            <input id="vso-url-input" class="vso-text-input" type="url" placeholder="https://example.com/subtitle.srt">
-            <button id="vso-url-load" class="vso-action vso-action-primary" type="button">加载链接</button>
+            <input id="vso-search-input" class="vso-text-input" type="text" placeholder="输入影片关键词">
+            <button id="vso-search-button" class="vso-action vso-action-primary" type="button">搜索</button>
+          </div>
+          <div id="vso-search-feedback" class="vso-search-feedback">输入关键词后可从 Subtitle Cat 选择字幕。</div>
+          <div id="vso-search-results" class="vso-search-results vso-hidden"></div>
+          <div class="vso-manual-source">
+            <div class="vso-manual-title">也可以直接输入字幕链接</div>
+            <div class="vso-manual-hint">如果搜索结果里没有合适字幕，可以直接粘贴 .srt 链接。</div>
+            <div class="vso-source-row">
+              <input id="vso-url-input" class="vso-text-input" type="url" placeholder="https://example.com/subtitle.srt">
+              <button id="vso-url-load" class="vso-action vso-action-secondary" type="button">加载链接</button>
+            </div>
           </div>
         </div>
+      </div>
+    </div>
+    <div id="vso-panel-settings" class="vso-tab-panel vso-hidden">
+      <div class="vso-grid">
         <div class="vso-color-row">
           <div class="vso-field">
             <label for="vso-text-color">字体颜色</label>
@@ -167,11 +191,17 @@
   }
 
   const ui = {
+    tabLoad: panel.querySelector("#vso-tab-load"),
     tabSettings: panel.querySelector("#vso-tab-settings"),
     tabPreview: panel.querySelector("#vso-tab-preview"),
+    loadPanel: panel.querySelector("#vso-panel-load"),
     settingsPanel: panel.querySelector("#vso-panel-settings"),
     previewPanel: panel.querySelector("#vso-panel-preview"),
     fileInput: panel.querySelector("#vso-file-input"),
+    searchInput: panel.querySelector("#vso-search-input"),
+    searchButton: panel.querySelector("#vso-search-button"),
+    searchFeedback: panel.querySelector("#vso-search-feedback"),
+    searchResults: panel.querySelector("#vso-search-results"),
     urlInput: panel.querySelector("#vso-url-input"),
     urlLoadButton: panel.querySelector("#vso-url-load"),
     textColor: panel.querySelector("#vso-text-color"),
@@ -214,6 +244,11 @@
     ui.status.textContent = message;
   }
 
+  function setSearchFeedback(message, tone = "") {
+    ui.searchFeedback.textContent = message;
+    ui.searchFeedback.dataset.tone = tone;
+  }
+
   function saveSettings() {
     if (!hasChromeStorage) {
       return;
@@ -243,14 +278,23 @@
     updateSubtitleStyles();
   }
 
+  function updateSearchControls() {
+    ui.searchButton.disabled = state.searchLoading;
+  }
+
   function setPanelTab(tab) {
-    state.panelTab = tab === "preview" ? "preview" : "settings";
+    state.panelTab = tab === "preview" || tab === "settings" ? tab : "load";
+    const showingLoad = state.panelTab === "load";
+    const showingSettings = state.panelTab === "settings";
     const showingPreview = state.panelTab === "preview";
-    ui.tabSettings.classList.toggle("vso-tab-active", !showingPreview);
+    ui.tabLoad.classList.toggle("vso-tab-active", showingLoad);
+    ui.tabSettings.classList.toggle("vso-tab-active", showingSettings);
     ui.tabPreview.classList.toggle("vso-tab-active", showingPreview);
-    ui.tabSettings.setAttribute("aria-selected", String(!showingPreview));
+    ui.tabLoad.setAttribute("aria-selected", String(showingLoad));
+    ui.tabSettings.setAttribute("aria-selected", String(showingSettings));
     ui.tabPreview.setAttribute("aria-selected", String(showingPreview));
-    ui.settingsPanel.classList.toggle("vso-hidden", showingPreview);
+    ui.loadPanel.classList.toggle("vso-hidden", !showingLoad);
+    ui.settingsPanel.classList.toggle("vso-hidden", !showingSettings);
     ui.previewPanel.classList.toggle("vso-hidden", !showingPreview);
     if (showingPreview) {
       renderPreview(true);
@@ -752,6 +796,187 @@
     }
   }
 
+  function requestBackgroundMessage(message) {
+    return new Promise((resolve, reject) => {
+      if (!chrome.runtime?.sendMessage) {
+        reject(new Error("后台服务不可用"));
+        return;
+      }
+
+      chrome.runtime.sendMessage(message, (response) => {
+        if (chrome.runtime?.lastError) {
+          reject(new Error(chrome.runtime.lastError.message || "后台请求失败"));
+          return;
+        }
+
+        if (!response?.ok) {
+          reject(new Error(response?.error || "请求失败"));
+          return;
+        }
+
+        resolve(response);
+      });
+    });
+  }
+
+  function renderSearchResults() {
+    const previousScrollTop = ui.searchResults.scrollTop;
+    ui.searchResults.textContent = "";
+    const hasResults = state.searchResults.length > 0;
+    ui.searchResults.classList.toggle("vso-hidden", !hasResults);
+
+    if (!hasResults) {
+      return;
+    }
+
+    state.searchResults.forEach((result) => {
+      const item = document.createElement("div");
+      item.className = "vso-search-item";
+      item.dataset.detailUrl = result.detailUrl;
+      if (state.expandedResultUrl === result.detailUrl) {
+        item.classList.add("vso-search-item-expanded");
+      }
+
+      const header = document.createElement("div");
+      header.className = "vso-search-item-button";
+      header.tabIndex = 0;
+      header.setAttribute("role", "button");
+
+      const title = document.createElement("div");
+      title.className = "vso-search-item-title";
+      title.textContent = result.title;
+
+      const meta = document.createElement("div");
+      meta.className = "vso-search-item-meta";
+      meta.textContent = `${result.sizeLabel} · ${result.downloadLabel} · ${result.languageCountLabel}`;
+
+      header.append(title, meta);
+      item.appendChild(header);
+
+      if (state.expandedResultUrl === result.detailUrl) {
+        const detail = document.createElement("div");
+        detail.className = "vso-language-panel";
+
+        if (state.languageLoadingUrl === result.detailUrl) {
+          const loading = document.createElement("div");
+          loading.className = "vso-language-empty";
+          loading.textContent = "正在加载可下载语言...";
+          detail.appendChild(loading);
+        } else if (state.languageErrorByUrl[result.detailUrl]) {
+          const error = document.createElement("div");
+          error.className = "vso-language-empty";
+          error.textContent = state.languageErrorByUrl[result.detailUrl];
+          detail.appendChild(error);
+        } else {
+          const languages = state.languageOptionsByUrl[result.detailUrl] || [];
+
+          if (languages.length === 0) {
+            const empty = document.createElement("div");
+            empty.className = "vso-language-empty";
+            empty.textContent = "该条字幕暂无可下载语言。";
+            detail.appendChild(empty);
+          } else {
+            languages.forEach((option) => {
+              const button = document.createElement("button");
+              button.className = "vso-language-button";
+              button.type = "button";
+              button.textContent = option.languageLabel;
+              button.dataset.detailUrl = result.detailUrl;
+              button.dataset.downloadUrl = option.downloadUrl;
+              button.disabled = state.downloadingLanguageUrl === option.downloadUrl;
+              detail.appendChild(button);
+            });
+          }
+        }
+
+        item.appendChild(detail);
+      }
+
+      ui.searchResults.appendChild(item);
+    });
+
+    ui.searchResults.scrollTop = previousScrollTop;
+  }
+
+  async function searchSubtitleByKeyword(keyword) {
+    state.searchKeyword = String(keyword || "").trim();
+    state.searchLoading = true;
+    state.searchError = "";
+    state.expandedResultUrl = "";
+    setSearchFeedback("正在搜索字幕...");
+    updateSearchControls();
+    renderSearchResults();
+
+    try {
+      const response = await requestBackgroundMessage({
+        type: "vso-search-subtitlecat",
+        keyword: state.searchKeyword
+      });
+
+      state.searchResults = response.results || [];
+      setSearchFeedback(`找到 ${state.searchResults.length} 条字幕结果，点开后可选择语言。`, "success");
+    } catch (error) {
+      state.searchResults = [];
+      state.searchError = error instanceof Error ? error.message : "搜索字幕失败";
+      setSearchFeedback(state.searchError, "error");
+    } finally {
+      state.searchLoading = false;
+      updateSearchControls();
+      renderSearchResults();
+    }
+  }
+
+  async function expandSearchResult(result) {
+    state.expandedResultUrl = result.detailUrl;
+    state.languageErrorByUrl[result.detailUrl] = "";
+
+    if (state.languageOptionsByUrl[result.detailUrl]?.length) {
+      renderSearchResults();
+      return;
+    }
+
+    state.languageLoadingUrl = result.detailUrl;
+    renderSearchResults();
+
+    try {
+      const response = await requestBackgroundMessage({
+        type: "vso-fetch-subtitlecat-languages",
+        detailUrl: result.detailUrl
+      });
+
+      state.languageOptionsByUrl[result.detailUrl] = response.languages || [];
+    } catch (error) {
+      state.languageErrorByUrl[result.detailUrl] = error instanceof Error
+        ? error.message
+        : "语言列表加载失败";
+    } finally {
+      state.languageLoadingUrl = "";
+      renderSearchResults();
+    }
+  }
+
+  async function downloadSearchResultLanguage(option) {
+    state.downloadingLanguageUrl = option.downloadUrl;
+    renderSearchResults();
+    setStatus(`正在下载 ${option.languageLabel} 字幕...`);
+
+    try {
+      await loadSubtitleUrl(option.downloadUrl);
+    } finally {
+      state.downloadingLanguageUrl = "";
+      renderSearchResults();
+    }
+  }
+
+  function getSearchResultByDetailUrl(detailUrl) {
+    return state.searchResults.find((item) => item.detailUrl === detailUrl) || null;
+  }
+
+  function getLanguageOptionByUrls(detailUrl, downloadUrl) {
+    const languages = state.languageOptionsByUrl[detailUrl] || [];
+    return languages.find((item) => item.downloadUrl === downloadUrl) || null;
+  }
+
   async function loadSubtitleFile(file) {
     const content = await file.text();
     return loadSubtitleContent(
@@ -780,32 +1005,10 @@
   }
 
   function requestSubtitleDownload(url) {
-    return new Promise((resolve, reject) => {
-      if (!chrome.runtime?.sendMessage) {
-        reject(new Error("后台下载不可用"));
-        return;
-      }
-
-      chrome.runtime.sendMessage(
-        {
-          type: "vso-download-subtitle",
-          url
-        },
-        (response) => {
-          if (chrome.runtime?.lastError) {
-            reject(new Error(chrome.runtime.lastError.message || "后台下载失败"));
-            return;
-          }
-
-          if (!response?.ok) {
-            reject(new Error(response?.error || "下载字幕失败"));
-            return;
-          }
-
-          resolve(response.content);
-        }
-      );
-    });
+    return requestBackgroundMessage({
+      type: "vso-download-subtitle",
+      url
+    }).then((response) => response.content);
   }
 
   async function loadSubtitleUrl(url) {
@@ -844,7 +1047,7 @@
 
   button.addEventListener("click", () => togglePanel());
 
-  document.addEventListener("click", (event) => {
+  document.addEventListener("pointerdown", (event) => {
     const target = event.target;
     if (!(target instanceof Node)) {
       return;
@@ -868,6 +1071,99 @@
       setStatus(error instanceof Error ? error.message : "字幕文件加载失败");
     } finally {
       ui.fileInput.value = "";
+    }
+  });
+
+  ui.searchButton.addEventListener("click", async () => {
+    await searchSubtitleByKeyword(ui.searchInput.value);
+  });
+
+  ui.searchInput.addEventListener("input", () => {
+    state.searchKeyword = ui.searchInput.value;
+  });
+
+  ui.searchInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      ui.searchButton.click();
+    }
+  });
+
+  ui.searchResults.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    const languageButton = target.closest(".vso-language-button");
+    if (languageButton instanceof HTMLButtonElement) {
+      const detailUrl = languageButton.dataset.detailUrl || "";
+      const downloadUrl = languageButton.dataset.downloadUrl || "";
+      const option = getLanguageOptionByUrls(detailUrl, downloadUrl);
+      if (option) {
+        void downloadSearchResultLanguage(option);
+      }
+      return;
+    }
+
+    const resultItem = target.closest(".vso-search-item");
+    if (!(resultItem instanceof HTMLElement)) {
+      return;
+    }
+
+    const detailUrl = resultItem.dataset.detailUrl || "";
+    if (!detailUrl) {
+      return;
+    }
+
+    if (state.expandedResultUrl === detailUrl) {
+      state.expandedResultUrl = "";
+      state.languageLoadingUrl = "";
+      renderSearchResults();
+      return;
+    }
+
+    const result = getSearchResultByDetailUrl(detailUrl);
+    if (result) {
+      void expandSearchResult(result);
+    }
+  });
+
+  ui.searchResults.addEventListener("keydown", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    const resultItem = target.closest(".vso-search-item");
+    if (!(resultItem instanceof HTMLElement)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const detailUrl = resultItem.dataset.detailUrl || "";
+    if (!detailUrl) {
+      return;
+    }
+
+    if (state.expandedResultUrl === detailUrl) {
+      state.expandedResultUrl = "";
+      state.languageLoadingUrl = "";
+      renderSearchResults();
+      return;
+    }
+
+    const result = getSearchResultByDetailUrl(detailUrl);
+    if (result) {
+      void expandSearchResult(result);
     }
   });
 
@@ -933,6 +1229,10 @@
     adjustDelay(DELAY_STEP_MS);
   });
 
+  ui.tabLoad.addEventListener("click", () => {
+    setPanelTab("load");
+  });
+
   ui.tabSettings.addEventListener("click", () => {
     setPanelTab("settings");
   });
@@ -968,7 +1268,12 @@
 
   ui.resetButton.addEventListener("click", resetSettings);
 
-  window.addEventListener("scroll", () => {
+  window.addEventListener("scroll", (event) => {
+    const target = event.target;
+    if (target instanceof Node && panel.contains(target)) {
+      return;
+    }
+
     positionButton();
     renderSubtitle();
   }, true);
@@ -1018,5 +1323,7 @@
   loadSettings();
   loadSiteState();
   scanVideos();
-  setPanelTab("settings");
+  updateSearchControls();
+  renderSearchResults();
+  setPanelTab("load");
 })();
