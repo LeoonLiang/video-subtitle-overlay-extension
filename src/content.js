@@ -1,5 +1,8 @@
 (() => {
   const STORAGE_KEY = "vso-settings";
+  const PAGE_MEMORY_STORAGE_KEY = "vso-page-memory";
+  const HISTORY_STORAGE_KEY = "vso-subtitle-history";
+  const FAVORITES_STORAGE_KEY = "vso-subtitle-favorites";
   const DEFAULT_SETTINGS = {
     textColor: "#ffffff",
     backgroundColor: "#000000",
@@ -15,7 +18,8 @@
     cues: [],
     settings: { ...DEFAULT_SETTINGS },
     panelOpen: false,
-    panelTab: "settings",
+    panelTab: "load",
+    expandedLoadSection: "",
     hoverLocked: false,
     siteEnabled: false,
     activeCueIndex: -1,
@@ -31,7 +35,16 @@
     languageOptionsByUrl: {},
     languageErrorByUrl: {},
     languageLoadingUrl: "",
-    downloadingLanguageUrl: ""
+    downloadingLanguageUrl: "",
+    subtitleVisible: true,
+    currentSubtitleSource: null,
+    pageMemory: {},
+    history: [],
+    favorites: [],
+    settingsLoaded: false,
+    siteStateLoaded: false,
+    libraryLoaded: false,
+    pageMemoryRestored: false
   };
   const helpers = globalThis.__VSO_HELPERS__ || {};
   const SITE_STORAGE_KEY = helpers.SITE_STORAGE_KEY || "vso-enabled-sites";
@@ -69,6 +82,45 @@
         activeCueIndex,
         showResumeButton: autoFollow === false
       });
+  const buildPageMemoryRecord =
+    typeof helpers.buildPageMemoryRecord === "function"
+      ? helpers.buildPageMemoryRecord
+      : ({ delayMs, subtitleSource, updatedAt }) => ({
+        delayMs,
+        subtitleSource,
+        updatedAt
+      });
+  const upsertPageMemoryEntry =
+    typeof helpers.upsertPageMemoryEntry === "function"
+      ? helpers.upsertPageMemoryEntry
+      : (entries, pageUrl, record) => ({
+        ...(entries || {}),
+        [pageUrl]: record
+      });
+  const upsertSubtitleHistoryEntry =
+    typeof helpers.upsertSubtitleHistoryEntry === "function"
+      ? helpers.upsertSubtitleHistoryEntry
+      : (list, entry) => [entry, ...(Array.isArray(list) ? list : [])];
+  const upsertSubtitleFavoriteEntry =
+    typeof helpers.upsertSubtitleFavoriteEntry === "function"
+      ? helpers.upsertSubtitleFavoriteEntry
+      : (list, entry) => [entry, ...(Array.isArray(list) ? list : [])];
+  const removeSubtitleListEntry =
+    typeof helpers.removeSubtitleListEntry === "function"
+      ? helpers.removeSubtitleListEntry
+      : (list, entryId) => (Array.isArray(list) ? list.filter((entry) => entry?.id !== entryId) : []);
+  const clearSubtitleList =
+    typeof helpers.clearSubtitleList === "function"
+      ? helpers.clearSubtitleList
+      : () => [];
+  const isShortcutEventAllowed =
+    typeof helpers.isShortcutEventAllowed === "function"
+      ? helpers.isShortcutEventAllowed
+      : () => true;
+  const formatShortcutToastMessage =
+    typeof helpers.formatShortcutToastMessage === "function"
+      ? helpers.formatShortcutToastMessage
+      : () => "";
   let currentUiRoot = null;
 
   const button = document.createElement("button");
@@ -82,30 +134,81 @@
     <div class="vso-panel-title">字幕设置</div>
     <div class="vso-tabs" role="tablist" aria-label="字幕面板">
       <button id="vso-tab-load" class="vso-tab vso-tab-active" type="button" role="tab" aria-selected="true">加载</button>
+      <button id="vso-tab-library" class="vso-tab" type="button" role="tab" aria-selected="false">历史收藏</button>
       <button id="vso-tab-settings" class="vso-tab" type="button" role="tab" aria-selected="false">设置</button>
-      <button id="vso-tab-preview" class="vso-tab" type="button" role="tab" aria-selected="false">预览</button>
     </div>
     <div id="vso-panel-load" class="vso-tab-panel">
       <div class="vso-grid">
-        <div class="vso-field">
-          <label for="vso-file-input">加载本地字幕</label>
-          <input id="vso-file-input" class="vso-file" type="file" accept=".srt,.vtt,.ass,.ssa,.json,text/plain">
-        </div>
-        <div class="vso-field">
-          <label for="vso-search-input">搜索字幕</label>
+        <div class="vso-search-shell">
+          <div class="vso-search-header">
+            <div class="vso-panel-heading">搜索字幕</div>
+            <div class="vso-panel-subtitle">直接搜索并加载，其他方式在下方展开。</div>
+          </div>
           <div class="vso-source-row">
             <input id="vso-search-input" class="vso-text-input" type="text" placeholder="输入影片关键词">
             <button id="vso-search-button" class="vso-action vso-action-primary" type="button">搜索</button>
           </div>
+          <div class="vso-current-subtitle vso-current-subtitle-compact">
+            <div class="vso-current-subtitle-copy">
+              <div class="vso-current-subtitle-label">当前字幕</div>
+              <div id="vso-current-subtitle-name" class="vso-current-subtitle-name">未加载字幕</div>
+            </div>
+            <div class="vso-current-subtitle-actions">
+              <button id="vso-current-toggle-visibility" class="vso-link-button vso-library-clear" type="button">隐藏</button>
+              <button id="vso-clear-subtitle" class="vso-link-button vso-library-clear" type="button">清空</button>
+            </div>
+          </div>
           <div id="vso-search-feedback" class="vso-search-feedback">输入关键词后可从 Subtitle Cat 选择字幕。</div>
           <div id="vso-search-results" class="vso-search-results vso-hidden"></div>
-          <div class="vso-manual-source">
-            <div class="vso-manual-title">也可以直接输入字幕链接</div>
-            <div class="vso-manual-hint">如果搜索结果里没有合适字幕，可以直接粘贴 .srt 链接。</div>
-            <div class="vso-source-row">
-              <input id="vso-url-input" class="vso-text-input" type="url" placeholder="https://example.com/subtitle.srt">
-              <button id="vso-url-load" class="vso-action vso-action-secondary" type="button">加载链接</button>
+        </div>
+        <div class="vso-secondary-loads">
+          <button id="vso-file-toggle" class="vso-disclosure" type="button" aria-expanded="false">
+            <span>本地字幕</span>
+            <span class="vso-disclosure-icon">+</span>
+          </button>
+          <div id="vso-load-panel-file" class="vso-load-panel vso-hidden">
+            <div class="vso-field">
+              <label for="vso-file-input">选择本地字幕文件</label>
+              <input id="vso-file-input" class="vso-file" type="file" accept=".srt,.vtt,.ass,.ssa,.json,text/plain">
             </div>
+          </div>
+          <button id="vso-url-toggle" class="vso-disclosure" type="button" aria-expanded="false">
+            <span>在线链接</span>
+            <span class="vso-disclosure-icon">+</span>
+          </button>
+          <div id="vso-load-panel-url" class="vso-load-panel vso-hidden">
+            <div class="vso-manual-source">
+              <div class="vso-manual-title">输入在线字幕链接</div>
+              <div class="vso-manual-hint">粘贴可直接访问的 .srt / .vtt 等字幕链接。</div>
+              <div class="vso-source-row">
+                <input id="vso-url-input" class="vso-text-input" type="url" placeholder="https://example.com/subtitle.srt">
+                <button id="vso-url-load" class="vso-action vso-action-secondary" type="button">加载链接</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="vso-panel-library" class="vso-tab-panel vso-hidden">
+      <div class="vso-library-section">
+        <div class="vso-library-header">
+          <div class="vso-manual-title">历史与收藏</div>
+          <button id="vso-page-memory-clear" class="vso-link-button vso-library-clear" type="button">清除当前页面记忆</button>
+        </div>
+        <div class="vso-library-group">
+          <div class="vso-library-title">最近使用</div>
+          <div id="vso-history-empty" class="vso-language-empty">还没有字幕使用记录。</div>
+          <div id="vso-history-list" class="vso-library-list vso-hidden"></div>
+          <div class="vso-library-actions">
+            <button id="vso-history-clear" class="vso-link-button vso-library-clear" type="button">清空历史</button>
+          </div>
+        </div>
+        <div class="vso-library-group">
+          <div class="vso-library-title">我的收藏</div>
+          <div id="vso-favorites-empty" class="vso-language-empty">还没有收藏字幕来源。</div>
+          <div id="vso-favorites-list" class="vso-library-list vso-hidden"></div>
+          <div class="vso-library-actions">
+            <button id="vso-favorites-clear" class="vso-link-button vso-library-clear" type="button">清空收藏</button>
           </div>
         </div>
       </div>
@@ -144,22 +247,14 @@
           </div>
           <div id="vso-delay-value" class="vso-delay-value">当前偏移：0.0s</div>
         </div>
+        <div class="vso-field">
+          <span>快捷键</span>
+          <div class="vso-shortcut-hint">[ 提前 0.5s，] 延后 0.5s，H 显示或隐藏字幕，S 打开或关闭面板。</div>
+        </div>
         <div class="vso-action-row">
           <button id="vso-hide-subtitles" class="vso-action vso-action-secondary" type="button">隐藏字幕</button>
           <button id="vso-reset" class="vso-action vso-action-primary" type="button">恢复默认</button>
         </div>
-      </div>
-    </div>
-    <div id="vso-panel-preview" class="vso-tab-panel vso-hidden">
-      <div class="vso-preview-header">
-        <div class="vso-preview-title">当前字幕时间线</div>
-        <button id="vso-preview-resume" class="vso-action vso-action-secondary vso-preview-resume vso-hidden" type="button">恢复跟随</button>
-      </div>
-      <div id="vso-preview-empty" class="vso-preview-empty">加载字幕后可在这里查看同步时间线。</div>
-      <div id="vso-preview-list" class="vso-preview-list vso-hidden"></div>
-      <div class="vso-preview-footer">
-        <button id="vso-preview-earlier" class="vso-action vso-action-secondary" type="button">提前 0.5s</button>
-        <button id="vso-preview-later" class="vso-action vso-action-secondary" type="button">延后 0.5s</button>
       </div>
     </div>
     <div id="vso-status" class="vso-status">未加载字幕</div>
@@ -170,11 +265,17 @@
   const subtitleBox = document.createElement("div");
   subtitleBox.className = "vso-subtitle-box";
   subtitleLayer.appendChild(subtitleBox);
+  const toastLayer = document.createElement("div");
+  toastLayer.className = "vso-toast-layer vso-hidden";
+  const toastBox = document.createElement("div");
+  toastBox.className = "vso-toast-box";
+  toastLayer.appendChild(toastBox);
 
   function removeUi() {
     button.remove();
     panel.remove();
     subtitleLayer.remove();
+    toastLayer.remove();
     currentUiRoot = null;
   }
 
@@ -186,17 +287,24 @@
     if (!nextRoot || nextRoot === currentUiRoot) {
       return;
     }
-    nextRoot.append(button, panel, subtitleLayer);
+    nextRoot.append(button, panel, subtitleLayer, toastLayer);
     currentUiRoot = nextRoot;
   }
 
   const ui = {
     tabLoad: panel.querySelector("#vso-tab-load"),
+    tabLibrary: panel.querySelector("#vso-tab-library"),
     tabSettings: panel.querySelector("#vso-tab-settings"),
-    tabPreview: panel.querySelector("#vso-tab-preview"),
     loadPanel: panel.querySelector("#vso-panel-load"),
+    libraryPanel: panel.querySelector("#vso-panel-library"),
     settingsPanel: panel.querySelector("#vso-panel-settings"),
-    previewPanel: panel.querySelector("#vso-panel-preview"),
+    currentToggleVisibilityButton: panel.querySelector("#vso-current-toggle-visibility"),
+    fileToggleButton: panel.querySelector("#vso-file-toggle"),
+    urlToggleButton: panel.querySelector("#vso-url-toggle"),
+    loadPanelFile: panel.querySelector("#vso-load-panel-file"),
+    loadPanelUrl: panel.querySelector("#vso-load-panel-url"),
+    currentSubtitleName: panel.querySelector("#vso-current-subtitle-name"),
+    clearSubtitleButton: panel.querySelector("#vso-clear-subtitle"),
     fileInput: panel.querySelector("#vso-file-input"),
     searchInput: panel.querySelector("#vso-search-input"),
     searchButton: panel.querySelector("#vso-search-button"),
@@ -204,6 +312,13 @@
     searchResults: panel.querySelector("#vso-search-results"),
     urlInput: panel.querySelector("#vso-url-input"),
     urlLoadButton: panel.querySelector("#vso-url-load"),
+    pageMemoryClearButton: panel.querySelector("#vso-page-memory-clear"),
+    historyList: panel.querySelector("#vso-history-list"),
+    historyEmpty: panel.querySelector("#vso-history-empty"),
+    historyClearButton: panel.querySelector("#vso-history-clear"),
+    favoritesList: panel.querySelector("#vso-favorites-list"),
+    favoritesEmpty: panel.querySelector("#vso-favorites-empty"),
+    favoritesClearButton: panel.querySelector("#vso-favorites-clear"),
     textColor: panel.querySelector("#vso-text-color"),
     bgColor: panel.querySelector("#vso-bg-color"),
     bgOpacity: panel.querySelector("#vso-bg-opacity"),
@@ -212,16 +327,15 @@
     fontSizeValue: panel.querySelector("#vso-font-size-value"),
     delayEarlierButton: panel.querySelector("#vso-delay-earlier"),
     delayLaterButton: panel.querySelector("#vso-delay-later"),
-    previewEarlierButton: panel.querySelector("#vso-preview-earlier"),
-    previewLaterButton: panel.querySelector("#vso-preview-later"),
     delayValue: panel.querySelector("#vso-delay-value"),
-    previewResumeButton: panel.querySelector("#vso-preview-resume"),
-    previewEmpty: panel.querySelector("#vso-preview-empty"),
-    previewList: panel.querySelector("#vso-preview-list"),
     hideButton: panel.querySelector("#vso-hide-subtitles"),
     resetButton: panel.querySelector("#vso-reset"),
     status: panel.querySelector("#vso-status")
   };
+
+  ui.previewResumeButton = document.createElement("button");
+  ui.previewEmpty = document.createElement("div");
+  ui.previewList = document.createElement("div");
 
   const hasChromeStorage =
     typeof chrome !== "undefined" &&
@@ -276,47 +390,283 @@
     ui.fontSizeValue.textContent = `${state.settings.fontSize}px`;
     ui.delayValue.textContent = `当前偏移：${formatDelayLabel(state.settings.delayMs)}`;
     updateSubtitleStyles();
+    updateHideButtonLabel();
   }
 
   function updateSearchControls() {
     ui.searchButton.disabled = state.searchLoading;
   }
 
-  function setPanelTab(tab) {
-    state.panelTab = tab === "preview" || tab === "settings" ? tab : "load";
-    const showingLoad = state.panelTab === "load";
-    const showingSettings = state.panelTab === "settings";
-    const showingPreview = state.panelTab === "preview";
-    ui.tabLoad.classList.toggle("vso-tab-active", showingLoad);
-    ui.tabSettings.classList.toggle("vso-tab-active", showingSettings);
-    ui.tabPreview.classList.toggle("vso-tab-active", showingPreview);
-    ui.tabLoad.setAttribute("aria-selected", String(showingLoad));
-    ui.tabSettings.setAttribute("aria-selected", String(showingSettings));
-    ui.tabPreview.setAttribute("aria-selected", String(showingPreview));
-    ui.loadPanel.classList.toggle("vso-hidden", !showingLoad);
-    ui.settingsPanel.classList.toggle("vso-hidden", !showingSettings);
-    ui.previewPanel.classList.toggle("vso-hidden", !showingPreview);
-    if (showingPreview) {
-      renderPreview(true);
+  function updateCurrentSubtitleDisplay() {
+    const source = getCurrentPageMemorySource();
+    ui.currentSubtitleName.textContent = source?.label || "未加载字幕";
+    ui.clearSubtitleButton.disabled = !source && state.cues.length === 0;
+    ui.currentToggleVisibilityButton.textContent = state.subtitleVisible ? "隐藏" : "显示";
+  }
+
+  function showToast(message) {
+    if (!message) {
+      return;
     }
+
+    toastBox.textContent = message;
+    toastLayer.classList.remove("vso-hidden");
+    toastLayer.classList.add("vso-toast-visible");
+
+    window.clearTimeout(state.toastTimer || 0);
+    state.toastTimer = window.setTimeout(() => {
+      toastLayer.classList.remove("vso-toast-visible");
+      toastLayer.classList.add("vso-hidden");
+    }, 1200);
+  }
+
+  function getCurrentPageUrl() {
+    return window.location.href;
+  }
+
+  function createListEntryId(prefix) {
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function getSourceSiteLabel(url) {
+    if (!url) {
+      return "local";
+    }
+
+    try {
+      return new URL(url).hostname || "remote";
+    } catch (error) {
+      return "remote";
+    }
+  }
+
+  function buildSubtitleSource(kind, label, url = "") {
+    return {
+      kind,
+      label,
+      url,
+      sourceSite: kind === "local" ? "local" : getSourceSiteLabel(url)
+    };
+  }
+
+  function buildListEntryFromSource(source) {
+    return {
+      id: createListEntryId("vso"),
+      kind: source.kind,
+      label: source.label,
+      url: source.url || "",
+      sourceSite: source.sourceSite || getSourceSiteLabel(source.url || ""),
+      pageUrl: getCurrentPageUrl(),
+      createdAt: Date.now()
+    };
+  }
+
+  function isSameFavoriteSource(left, right) {
+    if (!left || !right) {
+      return false;
+    }
+
+    if (left.kind !== right.kind) {
+      return false;
+    }
+
+    if (left.kind === "local") {
+      return left.label === right.label;
+    }
+
+    return Boolean(left.url) && left.url === right.url;
+  }
+
+  function isFavoriteEntry(entry) {
+    return state.favorites.some((favorite) => isSameFavoriteSource(favorite, entry));
+  }
+
+  function updateHideButtonLabel() {
+    ui.hideButton.textContent = state.subtitleVisible ? "隐藏字幕" : "显示字幕";
+  }
+
+  function persistCollection(key, value, onSuccess) {
+    if (!hasChromeStorage) {
+      if (typeof onSuccess === "function") {
+        onSuccess();
+      }
+      return;
+    }
+
+    chrome.storage.local.set({ [key]: value }, () => {
+      if (chrome.runtime?.lastError) {
+        setStatus(chrome.runtime.lastError.message || "保存失败");
+        return;
+      }
+
+      if (typeof onSuccess === "function") {
+        onSuccess();
+      }
+    });
+  }
+
+  function savePageMemory(nextPageMemory) {
+    persistCollection(PAGE_MEMORY_STORAGE_KEY, nextPageMemory, () => {
+      state.pageMemory = nextPageMemory;
+      updateCurrentSubtitleDisplay();
+      renderLibrary();
+    });
+  }
+
+  function saveHistory(nextHistory) {
+    persistCollection(HISTORY_STORAGE_KEY, nextHistory, () => {
+      state.history = nextHistory;
+      updateCurrentSubtitleDisplay();
+      renderLibrary();
+    });
+  }
+
+  function saveFavorites(nextFavorites) {
+    persistCollection(FAVORITES_STORAGE_KEY, nextFavorites, () => {
+      state.favorites = nextFavorites;
+      updateCurrentSubtitleDisplay();
+      renderLibrary();
+    });
+  }
+
+  function getCurrentPageMemorySource() {
+    const record = state.pageMemory[getCurrentPageUrl()];
+    return state.currentSubtitleSource || record?.subtitleSource || null;
+  }
+
+  function persistCurrentPageMemory() {
+    const subtitleSource = getCurrentPageMemorySource();
+    if (!subtitleSource) {
+      return;
+    }
+
+    const nextPageMemory = upsertPageMemoryEntry(
+      state.pageMemory,
+      getCurrentPageUrl(),
+      buildPageMemoryRecord({
+        delayMs: state.settings.delayMs,
+        subtitleSource,
+        updatedAt: Date.now()
+      })
+    );
+
+    savePageMemory(nextPageMemory);
+  }
+
+  function persistSubtitleUsage(source) {
+    state.currentSubtitleSource = source;
+    persistCurrentPageMemory();
+
+    const nextHistory = upsertSubtitleHistoryEntry(
+      state.history,
+      buildListEntryFromSource(source),
+      50
+    );
+
+    saveHistory(nextHistory);
+  }
+
+  function createRemoteRestoreMessage(source) {
+    return `已恢复上次字幕 ${source.label}`;
+  }
+
+  async function restorePageMemoryIfNeeded() {
+    if (
+      state.pageMemoryRestored ||
+      !state.settingsLoaded ||
+      !state.siteStateLoaded ||
+      !state.libraryLoaded ||
+      !state.siteEnabled
+    ) {
+      return;
+    }
+
+    state.pageMemoryRestored = true;
+    const record = state.pageMemory[getCurrentPageUrl()];
+    if (!record) {
+      return;
+    }
+
+    if (Number.isFinite(record.delayMs)) {
+      state.settings.delayMs = record.delayMs;
+      syncControls();
+    }
+
+    if (!record.subtitleSource) {
+      return;
+    }
+
+    state.currentSubtitleSource = { ...record.subtitleSource };
+    updateCurrentSubtitleDisplay();
+
+    if (record.subtitleSource.kind === "local") {
+      setStatus(`已恢复偏移；上次使用本地字幕 ${record.subtitleSource.label}，请重新选择文件`);
+      return;
+    }
+
+    if (!record.subtitleSource.url) {
+      return;
+    }
+
+    try {
+      await loadSubtitleUrl(record.subtitleSource.url, record.subtitleSource, createRemoteRestoreMessage);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "自动恢复字幕失败");
+    }
+  }
+
+  function setPanelTab(tab) {
+    state.panelTab = tab === "library" || tab === "settings" ? tab : "load";
+    const showingLoad = state.panelTab === "load";
+    const showingLibrary = state.panelTab === "library";
+    const showingSettings = state.panelTab === "settings";
+    ui.tabLoad.classList.toggle("vso-tab-active", showingLoad);
+    ui.tabLibrary.classList.toggle("vso-tab-active", showingLibrary);
+    ui.tabSettings.classList.toggle("vso-tab-active", showingSettings);
+    ui.tabLoad.setAttribute("aria-selected", String(showingLoad));
+    ui.tabLibrary.setAttribute("aria-selected", String(showingLibrary));
+    ui.tabSettings.setAttribute("aria-selected", String(showingSettings));
+    ui.loadPanel.classList.toggle("vso-hidden", !showingLoad);
+    ui.libraryPanel.classList.toggle("vso-hidden", !showingLibrary);
+    ui.settingsPanel.classList.toggle("vso-hidden", !showingSettings);
+  }
+
+  function setLoadDisclosure(section) {
+    state.expandedLoadSection = state.expandedLoadSection === section ? "" : section;
+    const fileOpen = state.expandedLoadSection === "file";
+    const urlOpen = state.expandedLoadSection === "url";
+    ui.fileToggleButton.setAttribute("aria-expanded", String(fileOpen));
+    ui.urlToggleButton.setAttribute("aria-expanded", String(urlOpen));
+    ui.fileToggleButton.classList.toggle("vso-disclosure-open", fileOpen);
+    ui.urlToggleButton.classList.toggle("vso-disclosure-open", urlOpen);
+    ui.fileToggleButton.querySelector(".vso-disclosure-icon").textContent = fileOpen ? "−" : "+";
+    ui.urlToggleButton.querySelector(".vso-disclosure-icon").textContent = urlOpen ? "−" : "+";
+    ui.loadPanelFile.classList.toggle("vso-hidden", !fileOpen);
+    ui.loadPanelUrl.classList.toggle("vso-hidden", !urlOpen);
   }
 
   function loadSettings() {
     if (!hasChromeStorage) {
+      state.settingsLoaded = true;
       syncControls();
+      void restorePageMemoryIfNeeded();
       return;
     }
     chrome.storage.local.get(STORAGE_KEY, (result) => {
       if (chrome.runtime?.lastError) {
+        state.settingsLoaded = true;
         syncControls();
+        void restorePageMemoryIfNeeded();
         return;
       }
       state.settings = {
         ...DEFAULT_SETTINGS,
         ...(result[STORAGE_KEY] || {})
       };
+      state.settingsLoaded = true;
       syncControls();
       renderSubtitle();
+      void restorePageMemoryIfNeeded();
     });
   }
 
@@ -336,24 +686,56 @@
     refreshActiveVideo();
     positionButton();
     renderSubtitle();
+    void restorePageMemoryIfNeeded();
   }
 
   function loadSiteState() {
     if (!hasChromeStorage) {
+      state.siteStateLoaded = true;
       applySiteEnabled(false);
       return;
     }
 
     chrome.storage.local.get(SITE_STORAGE_KEY, (result) => {
       if (chrome.runtime?.lastError) {
+        state.siteStateLoaded = true;
         applySiteEnabled(false);
         return;
       }
 
+      state.siteStateLoaded = true;
       applySiteEnabled(
         isSiteEnabled(result[SITE_STORAGE_KEY] || {}, window.location.href)
       );
     });
+  }
+
+  function loadLibraryState() {
+    if (!hasChromeStorage) {
+      state.libraryLoaded = true;
+      renderLibrary();
+      void restorePageMemoryIfNeeded();
+      return;
+    }
+
+    chrome.storage.local.get(
+      [PAGE_MEMORY_STORAGE_KEY, HISTORY_STORAGE_KEY, FAVORITES_STORAGE_KEY],
+      (result) => {
+        if (chrome.runtime?.lastError) {
+          state.libraryLoaded = true;
+          renderLibrary();
+          void restorePageMemoryIfNeeded();
+          return;
+        }
+
+        state.pageMemory = result[PAGE_MEMORY_STORAGE_KEY] || {};
+        state.history = Array.isArray(result[HISTORY_STORAGE_KEY]) ? result[HISTORY_STORAGE_KEY] : [];
+        state.favorites = Array.isArray(result[FAVORITES_STORAGE_KEY]) ? result[FAVORITES_STORAGE_KEY] : [];
+        state.libraryLoaded = true;
+        renderLibrary();
+        void restorePageMemoryIfNeeded();
+      }
+    );
   }
 
   function formatTime(seconds) {
@@ -548,6 +930,7 @@
         panel.classList.add("vso-hidden");
       }
       subtitleLayer.classList.add("vso-hidden");
+      toastLayer.classList.add("vso-hidden");
       return;
     }
 
@@ -573,6 +956,10 @@
     subtitleLayer.style.top = `${Math.max(0, rect.top)}px`;
     subtitleLayer.style.width = `${Math.max(0, rect.width)}px`;
     subtitleLayer.style.height = `${Math.max(0, rect.height)}px`;
+    toastLayer.style.left = `${Math.max(0, rect.left)}px`;
+    toastLayer.style.top = `${Math.max(0, rect.top)}px`;
+    toastLayer.style.width = `${Math.max(0, rect.width)}px`;
+    toastLayer.style.height = `${Math.max(0, rect.height)}px`;
   }
 
   function buildPreviewList() {
@@ -710,7 +1097,7 @@
     state.activeCueIndex = findCueIndexAtTime(state.cues, time);
     const cue = state.activeCueIndex >= 0 ? state.cues[state.activeCueIndex] : null;
     subtitleBox.textContent = cue ? cue.text : "";
-    subtitleLayer.classList.toggle("vso-hidden", !cue);
+    subtitleLayer.classList.toggle("vso-hidden", !cue || !state.subtitleVisible);
     renderPreview();
     positionButton();
   }
@@ -898,6 +1285,113 @@
     ui.searchResults.scrollTop = previousScrollTop;
   }
 
+  function formatRelativeTime(timestamp) {
+    if (!Number.isFinite(timestamp)) {
+      return "";
+    }
+
+    const diffMs = Math.max(0, Date.now() - timestamp);
+    const diffMinutes = Math.floor(diffMs / 60000);
+
+    if (diffMinutes < 1) {
+      return "刚刚";
+    }
+
+    if (diffMinutes < 60) {
+      return `${diffMinutes} 分钟前`;
+    }
+
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) {
+      return `${diffHours} 小时前`;
+    }
+
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays} 天前`;
+  }
+
+  function renderLibraryList(container, emptyNode, entries, type) {
+    container.textContent = "";
+    const hasEntries = entries.length > 0;
+    container.classList.toggle("vso-hidden", !hasEntries);
+    emptyNode.classList.toggle("vso-hidden", hasEntries);
+
+    if (!hasEntries) {
+      return;
+    }
+
+    entries.forEach((entry) => {
+      let pageHost = entry.pageUrl || "";
+      if (pageHost) {
+        try {
+          pageHost = new URL(entry.pageUrl).hostname || entry.pageUrl;
+        } catch (error) {
+          pageHost = entry.pageUrl;
+        }
+      }
+
+      const item = document.createElement("div");
+      item.className = "vso-library-item";
+      item.dataset.entryId = entry.id;
+      item.dataset.listType = type;
+
+      const title = document.createElement("div");
+      title.className = "vso-library-item-title";
+      title.textContent = entry.label || "未命名字幕";
+
+      const meta = document.createElement("div");
+      meta.className = "vso-library-item-meta";
+      meta.textContent = [
+        entry.kind === "subtitlecat" ? "Subtitle Cat" : entry.kind === "local" ? "本地文件" : "在线链接",
+        entry.sourceSite || "",
+        pageHost,
+        formatRelativeTime(entry.createdAt)
+      ].filter(Boolean).join(" · ");
+
+      const actions = document.createElement("div");
+      actions.className = "vso-library-item-actions";
+
+      const loadButton = document.createElement("button");
+      loadButton.className = "vso-link-button vso-library-action";
+      loadButton.type = "button";
+      loadButton.dataset.action = "load";
+      loadButton.textContent = "加载";
+      actions.appendChild(loadButton);
+
+      if (type === "history") {
+        const favoriteButton = document.createElement("button");
+        favoriteButton.className = "vso-link-button vso-library-action";
+        favoriteButton.type = "button";
+        favoriteButton.dataset.action = isFavoriteEntry(entry) ? "unfavorite" : "favorite";
+        favoriteButton.textContent = isFavoriteEntry(entry) ? "取消收藏" : "收藏";
+        actions.appendChild(favoriteButton);
+      } else {
+        const favoriteButton = document.createElement("button");
+        favoriteButton.className = "vso-link-button vso-library-action";
+        favoriteButton.type = "button";
+        favoriteButton.dataset.action = "unfavorite";
+        favoriteButton.textContent = "取消收藏";
+        actions.appendChild(favoriteButton);
+      }
+
+      const deleteButton = document.createElement("button");
+      deleteButton.className = "vso-link-button vso-library-action";
+      deleteButton.type = "button";
+      deleteButton.dataset.action = "delete";
+      deleteButton.textContent = "删除";
+      actions.appendChild(deleteButton);
+
+      item.append(title, meta, actions);
+      container.appendChild(item);
+    });
+  }
+
+  function renderLibrary() {
+    updateCurrentSubtitleDisplay();
+    renderLibraryList(ui.historyList, ui.historyEmpty, state.history, "history");
+    renderLibraryList(ui.favoritesList, ui.favoritesEmpty, state.favorites, "favorites");
+  }
+
   async function searchSubtitleByKeyword(keyword) {
     state.searchKeyword = String(keyword || "").trim();
     state.searchLoading = true;
@@ -961,7 +1455,14 @@
     setStatus(`正在下载 ${option.languageLabel} 字幕...`);
 
     try {
-      await loadSubtitleUrl(option.downloadUrl);
+      await loadSubtitleUrl(
+        option.downloadUrl,
+        buildSubtitleSource(
+          "subtitlecat",
+          getSubtitleFilenameFromUrl(option.downloadUrl),
+          option.downloadUrl
+        )
+      );
     } finally {
       state.downloadingLanguageUrl = "";
       renderSearchResults();
@@ -977,16 +1478,170 @@
     return languages.find((item) => item.downloadUrl === downloadUrl) || null;
   }
 
+  function getEntryByListType(listType, entryId) {
+    const list = listType === "favorites" ? state.favorites : state.history;
+    return list.find((entry) => entry.id === entryId) || null;
+  }
+
+  async function loadSavedEntry(entry) {
+    if (!entry) {
+      return;
+    }
+
+    if (entry.kind === "local") {
+      state.currentSubtitleSource = buildSubtitleSource("local", entry.label);
+      updateCurrentSubtitleDisplay();
+      persistCurrentPageMemory();
+      setStatus(`这是本地字幕记录 ${entry.label}，请重新选择文件`);
+      return;
+    }
+
+    await loadSubtitleUrl(
+      entry.url,
+      buildSubtitleSource(entry.kind, entry.label, entry.url)
+    );
+  }
+
+  function toggleFavoriteEntry(entry) {
+    if (!entry) {
+      return;
+    }
+
+    if (isFavoriteEntry(entry)) {
+      const existing = state.favorites.find((favorite) => isSameFavoriteSource(favorite, entry));
+      if (!existing) {
+        return;
+      }
+      saveFavorites(removeSubtitleListEntry(state.favorites, existing.id));
+      return;
+    }
+
+    saveFavorites(
+      upsertSubtitleFavoriteEntry(state.favorites, {
+        ...entry,
+        id: createListEntryId("favorite"),
+        createdAt: Date.now()
+      })
+    );
+  }
+
+  function clearCurrentPageMemory() {
+    const pageUrl = getCurrentPageUrl();
+    const nextPageMemory = { ...state.pageMemory };
+    delete nextPageMemory[pageUrl];
+    persistCollection(PAGE_MEMORY_STORAGE_KEY, nextPageMemory, () => {
+      state.pageMemory = nextPageMemory;
+      state.currentSubtitleSource = null;
+      updateCurrentSubtitleDisplay();
+      renderLibrary();
+      setStatus("已清除当前页面记忆");
+    });
+  }
+
+  function clearCurrentSubtitle() {
+    state.cues = [];
+    state.activeCueIndex = -1;
+    state.previewItems = [];
+    state.previewAutoFollow = true;
+    state.subtitleVisible = true;
+    state.currentSubtitleSource = null;
+    subtitleBox.textContent = "";
+    subtitleLayer.classList.add("vso-hidden");
+    updateHideButtonLabel();
+
+    const pageUrl = getCurrentPageUrl();
+    const existingRecord = state.pageMemory[pageUrl];
+    const nextPageMemory = upsertPageMemoryEntry(
+      state.pageMemory,
+      pageUrl,
+      buildPageMemoryRecord({
+        delayMs: state.settings.delayMs,
+        subtitleSource: null,
+        updatedAt: Date.now()
+      })
+    );
+
+    savePageMemory(nextPageMemory);
+    setStatus(existingRecord?.subtitleSource ? "已清空当前字幕" : "当前没有可清空的字幕");
+    updateCurrentSubtitleDisplay();
+  }
+
+  function handleLibraryAction(listType, entryId, action) {
+    const entry = getEntryByListType(listType, entryId);
+    if (!entry) {
+      return;
+    }
+
+    if (action === "load") {
+      void loadSavedEntry(entry).catch((error) => {
+        setStatus(error instanceof Error ? error.message : "字幕加载失败");
+      });
+      return;
+    }
+
+    if (action === "favorite" || action === "unfavorite") {
+      toggleFavoriteEntry(entry);
+      return;
+    }
+
+    if (action === "delete") {
+      if (listType === "favorites") {
+        saveFavorites(removeSubtitleListEntry(state.favorites, entryId));
+      } else {
+        saveHistory(removeSubtitleListEntry(state.history, entryId));
+      }
+    }
+  }
+
+  function handleShortcut(event) {
+    if (!isShortcutEventAllowed(event) || !state.siteEnabled || !state.activeVideo) {
+      return;
+    }
+
+    if (event.key === "[") {
+      event.preventDefault();
+      adjustDelay(-DELAY_STEP_MS);
+      showToast(formatShortcutToastMessage("delay", -DELAY_STEP_MS, formatDelayLabel(state.settings.delayMs)));
+      return;
+    }
+
+    if (event.key === "]") {
+      event.preventDefault();
+      adjustDelay(DELAY_STEP_MS);
+      showToast(formatShortcutToastMessage("delay", DELAY_STEP_MS, formatDelayLabel(state.settings.delayMs)));
+      return;
+    }
+
+    const normalizedKey = event.key.toLowerCase();
+
+    if (normalizedKey === "h") {
+      event.preventDefault();
+      state.subtitleVisible = !state.subtitleVisible;
+      updateHideButtonLabel();
+      setStatus(state.subtitleVisible ? "字幕已显示" : "字幕已隐藏");
+      renderSubtitle();
+      showToast(formatShortcutToastMessage("toggle-visibility", null, null, state.subtitleVisible));
+      return;
+    }
+
+    if (normalizedKey === "s") {
+      event.preventDefault();
+      togglePanel();
+      showToast(state.panelOpen ? "已打开字幕面板" : "已关闭字幕面板");
+    }
+  }
+
   async function loadSubtitleFile(file) {
     const content = await file.text();
     return loadSubtitleContent(
       file.name,
       content,
+      buildSubtitleSource("local", file.name),
       (cueCount) => `已加载 ${file.name}，共 ${cueCount} 条字幕`
     );
   }
 
-  function loadSubtitleContent(sourceName, content, buildSuccessMessage) {
+  function loadSubtitleContent(sourceName, content, source, buildSuccessMessage) {
     const cues = parseSubtitleFile(sourceName, content)
       .filter((cue) => cue.end >= cue.start)
       .sort((a, b) => a.start - b.start);
@@ -998,7 +1653,13 @@
     state.cues = cues;
     state.activeCueIndex = -1;
     state.previewAutoFollow = true;
+    state.subtitleVisible = true;
     buildPreviewList();
+    if (source) {
+      persistSubtitleUsage(source);
+    }
+    updateHideButtonLabel();
+    updateCurrentSubtitleDisplay();
     setStatus(buildSuccessMessage(cues.length));
     renderSubtitle();
     return cues;
@@ -1011,7 +1672,7 @@
     }).then((response) => response.content);
   }
 
-  async function loadSubtitleUrl(url) {
+  async function loadSubtitleUrl(url, source = null, buildSuccessMessage = null) {
     const trimmedUrl = String(url || "").trim();
 
     if (!trimmedUrl) {
@@ -1021,11 +1682,15 @@
     setStatus("正在下载字幕...");
     const content = await requestSubtitleDownload(trimmedUrl);
     const sourceName = getSubtitleFilenameFromUrl(trimmedUrl);
+    const subtitleSource = source || buildSubtitleSource("remote", sourceName, trimmedUrl);
 
     return loadSubtitleContent(
       sourceName,
       content,
-      (cueCount) => `已加载在线字幕 ${sourceName}，共 ${cueCount} 条字幕`
+      subtitleSource,
+      typeof buildSuccessMessage === "function"
+        ? buildSuccessMessage
+        : (cueCount) => `已加载在线字幕 ${sourceName}，共 ${cueCount} 条字幕`
     );
   }
 
@@ -1033,6 +1698,7 @@
     state.settings.delayMs += deltaMs;
     syncControls();
     saveSettings();
+    persistCurrentPageMemory();
     setStatus(`当前字幕偏移 ${formatDelayLabel(state.settings.delayMs)}`);
     renderSubtitle();
   }
@@ -1041,6 +1707,7 @@
     state.settings = { ...DEFAULT_SETTINGS };
     syncControls();
     saveSettings();
+    persistCurrentPageMemory();
     setStatus(`当前字幕偏移 ${formatDelayLabel(state.settings.delayMs)}`);
     renderSubtitle();
   }
@@ -1221,49 +1888,95 @@
     adjustDelay(DELAY_STEP_MS);
   });
 
-  ui.previewEarlierButton.addEventListener("click", () => {
-    adjustDelay(-DELAY_STEP_MS);
-  });
-
-  ui.previewLaterButton.addEventListener("click", () => {
-    adjustDelay(DELAY_STEP_MS);
-  });
-
   ui.tabLoad.addEventListener("click", () => {
     setPanelTab("load");
+  });
+
+  ui.tabLibrary.addEventListener("click", () => {
+    setPanelTab("library");
   });
 
   ui.tabSettings.addEventListener("click", () => {
     setPanelTab("settings");
   });
 
-  ui.tabPreview.addEventListener("click", () => {
-    setPanelTab("preview");
+  ui.fileToggleButton.addEventListener("click", () => {
+    setLoadDisclosure("file");
   });
 
-  ui.previewResumeButton.addEventListener("click", () => {
-    setPreviewAutoFollow(true);
-    renderPreview(true);
+  ui.urlToggleButton.addEventListener("click", () => {
+    setLoadDisclosure("url");
   });
 
-  ui.previewList.addEventListener("scroll", () => {
-    if (state.previewIgnoreScroll || !state.previewAutoFollow) {
+  ui.clearSubtitleButton.addEventListener("click", () => {
+    clearCurrentSubtitle();
+  });
+
+  ui.currentToggleVisibilityButton.addEventListener("click", () => {
+    state.subtitleVisible = !state.subtitleVisible;
+    updateHideButtonLabel();
+    updateCurrentSubtitleDisplay();
+    setStatus(state.subtitleVisible ? "字幕已显示" : "字幕已隐藏");
+    renderSubtitle();
+  });
+
+  ui.historyList.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
       return;
     }
-    setPreviewAutoFollow(false);
-    renderPreview();
+
+    const actionButton = target.closest("[data-action]");
+    const item = target.closest(".vso-library-item");
+    if (!(actionButton instanceof HTMLElement) || !(item instanceof HTMLElement)) {
+      return;
+    }
+
+    handleLibraryAction(
+      item.dataset.listType || "history",
+      item.dataset.entryId || "",
+      actionButton.dataset.action || ""
+    );
+  });
+
+  ui.favoritesList.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    const actionButton = target.closest("[data-action]");
+    const item = target.closest(".vso-library-item");
+    if (!(actionButton instanceof HTMLElement) || !(item instanceof HTMLElement)) {
+      return;
+    }
+
+    handleLibraryAction(
+      item.dataset.listType || "favorites",
+      item.dataset.entryId || "",
+      actionButton.dataset.action || ""
+    );
+  });
+
+  ui.historyClearButton.addEventListener("click", () => {
+    saveHistory(clearSubtitleList(state.history));
+    setStatus("已清空历史");
+  });
+
+  ui.favoritesClearButton.addEventListener("click", () => {
+    saveFavorites(clearSubtitleList(state.favorites));
+    setStatus("已清空收藏");
+  });
+
+  ui.pageMemoryClearButton.addEventListener("click", () => {
+    clearCurrentPageMemory();
   });
 
   ui.hideButton.addEventListener("click", () => {
-    state.cues = [];
-    state.activeCueIndex = -1;
-    state.previewItems = [];
-    state.previewAutoFollow = true;
-    ui.previewList.textContent = "";
-    subtitleBox.textContent = "";
-    subtitleLayer.classList.add("vso-hidden");
-    setStatus("字幕已隐藏");
-    renderPreview();
+    state.subtitleVisible = !state.subtitleVisible;
+    updateHideButtonLabel();
+    setStatus(state.subtitleVisible ? "字幕已显示" : "字幕已隐藏");
+    renderSubtitle();
   });
 
   ui.resetButton.addEventListener("click", resetSettings);
@@ -1295,6 +2008,8 @@
     renderSubtitle();
   });
 
+  document.addEventListener("keydown", handleShortcut);
+
   if (chrome.runtime?.onMessage) {
     chrome.runtime.onMessage.addListener((message) => {
       if (message?.type === "vso-site-status-changed") {
@@ -1322,8 +2037,12 @@
 
   loadSettings();
   loadSiteState();
+  loadLibraryState();
   scanVideos();
   updateSearchControls();
   renderSearchResults();
+  renderLibrary();
+  updateCurrentSubtitleDisplay();
+  setLoadDisclosure("");
   setPanelTab("load");
 })();

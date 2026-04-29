@@ -75,9 +75,43 @@
   display: block;
 }
 
+.vso-load-panel {
+  display: block;
+}
+
 .vso-grid {
   display: grid;
   gap: 10px;
+}
+
+.vso-search-shell,
+.vso-secondary-loads {
+  display: grid;
+  gap: 10px;
+}
+
+.vso-search-shell {
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.vso-search-header {
+  display: grid;
+  gap: 4px;
+}
+
+.vso-panel-heading {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.vso-panel-subtitle {
+  font-size: 11px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.62);
 }
 
 .vso-field {
@@ -309,6 +343,159 @@
   line-height: 1.45;
 }
 
+.vso-current-subtitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.vso-current-subtitle-compact {
+  padding: 9px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.vso-current-subtitle-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.vso-current-subtitle-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.vso-current-subtitle-name {
+  flex: 1;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.88);
+  word-break: break-word;
+}
+
+.vso-current-subtitle-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.vso-disclosure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.vso-disclosure-open {
+  border-color: rgba(248, 250, 252, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.vso-disclosure-icon {
+  font-size: 16px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.vso-library-section,
+.vso-library-group {
+  display: grid;
+  gap: 8px;
+}
+
+.vso-library-section {
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.vso-library-header,
+.vso-library-actions,
+.vso-library-item-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.vso-library-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.84);
+}
+
+.vso-library-list {
+  display: grid;
+  gap: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.vso-library-item {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.vso-library-item-title {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.vso-library-item-meta {
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 11px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.vso-library-action,
+.vso-library-clear {
+  width: auto;
+  padding: 0;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.78);
+  text-align: left;
+}
+
+.vso-library-action:hover,
+.vso-library-clear:hover {
+  color: #fff;
+}
+
+.vso-shortcut-hint {
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .vso-status {
   min-height: 18px;
   margin-top: 8px;
@@ -420,4 +607,34 @@
   white-space: pre-wrap;
   word-break: break-word;
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+.vso-toast-layer {
+  position: fixed;
+  z-index: 2147483642;
+  pointer-events: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px 16px 72px;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.vso-toast-visible {
+  opacity: 1;
+}
+
+.vso-toast-box {
+  max-width: min(70%, 420px);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.9);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.32);
+  backdrop-filter: blur(10px);
 }
