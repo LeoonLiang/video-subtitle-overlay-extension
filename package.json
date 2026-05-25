@@ -6,6 +6,7 @@
   "scripts": {
     "build": "node ./scripts/build.mjs",
     "clean": "node ./scripts/build.mjs --clean",
+    "release:notes": "node ./scripts/generate-release-notes.mjs",
     "package:release": "node ./scripts/package-release.mjs",
     "test": "node ./tests/run-tests.mjs"
   },

@@ -27,14 +27,13 @@ jobs:
           EXTENSION_VERSION: ${{ github.ref_name }}
         run: npm run package:release
 
+      - name: Generate release notes
+        env:
+          EXTENSION_VERSION: ${{ github.ref_name }}
+        run: npm run release:notes
+
       - name: Publish GitHub Release asset
         uses: softprops/action-gh-release@v2
         with:
           files: dist/release/video-subtitle-overlay-extension.zip
-          generate_release_notes: true
-          body: |
-            安装方式：
-            1. 下载 `video-subtitle-overlay-extension.zip`
-            2. 先解压 zip 文件
-            3. 在 Chrome 或 Edge 扩展管理页选择“加载已解压的扩展程序”
-            4. 选择解压后的目录
+          body_path: dist/release/release-notes.md

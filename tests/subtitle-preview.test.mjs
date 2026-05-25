@@ -3,12 +3,14 @@ import "../src/content-helpers.js";
 
 const {
   findCueIndexAtTime,
+  getSubtitleMenuViewState,
   getPreviewTime,
   getPreviewViewState,
   getSeekTimeForCue
 } = globalThis.__VSO_HELPERS__ || {};
 
 assert.ok(findCueIndexAtTime, "findCueIndexAtTime should be defined");
+assert.ok(getSubtitleMenuViewState, "getSubtitleMenuViewState should be defined");
 assert.ok(getPreviewTime, "getPreviewTime should be defined");
 assert.ok(getPreviewViewState, "getPreviewViewState should be defined");
 assert.ok(getSeekTimeForCue, "getSeekTimeForCue should be defined");
@@ -93,6 +95,44 @@ assert.deepStrictEqual(
     showResumeButton: true
   },
   "should keep list mode and show resume button when follow is paused"
+);
+
+assert.deepStrictEqual(
+  getSubtitleMenuViewState({
+    cues,
+    activeCueIndex: 2,
+    autoFollow: true,
+    currentTime: 5.5
+  }),
+  {
+    mode: "list",
+    activeCueIndex: 2,
+    recentCueIndex: -1,
+    upcomingCueIndex: -1,
+    gapProgress: 1,
+    upcomingWarmth: 0,
+    showResumeButton: false
+  },
+  "should expose the active cue for the lyric-style subtitle menu"
+);
+
+assert.deepStrictEqual(
+  getSubtitleMenuViewState({
+    cues,
+    activeCueIndex: -1,
+    autoFollow: true,
+    currentTime: 1.5
+  }),
+  {
+    mode: "list",
+    activeCueIndex: -1,
+    recentCueIndex: 0,
+    upcomingCueIndex: 1,
+    gapProgress: 0.5,
+    upcomingWarmth: 0.833,
+    showResumeButton: false
+  },
+  "should describe the gap between the recent cue and upcoming cue"
 );
 
 console.log("subtitle-preview tests passed");

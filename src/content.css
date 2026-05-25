@@ -50,7 +50,7 @@
 
 .vso-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 12px;
 }
@@ -58,7 +58,8 @@
 .vso-tab {
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 999px;
-  padding: 8px 12px;
+  min-height: 32px;
+  padding: 8px 6px;
   background: rgba(255, 255, 255, 0.06);
   color: rgba(255, 255, 255, 0.78);
   font-size: 12px;
@@ -541,6 +542,7 @@
 
 .vso-preview-list {
   max-height: 240px;
+  min-height: 240px;
   overflow: auto;
   display: grid;
   gap: 8px;
@@ -550,9 +552,11 @@
 
 .vso-preview-item {
   display: grid;
+  position: relative;
   grid-template-columns: 58px 1fr;
   gap: 10px;
   width: 100%;
+  overflow: hidden;
   padding: 10px 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
@@ -561,6 +565,19 @@
   text-align: left;
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+.vso-preview-item::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: auto;
+  bottom: 0;
+  width: calc(var(--vso-gap-progress, 0) * 100%);
+  height: 2px;
+  background: rgba(248, 250, 252, 0.7);
+  opacity: 0;
+  transition: width 180ms linear, opacity 120ms ease;
 }
 
 .vso-preview-item:hover {
@@ -572,6 +589,24 @@
   border-color: rgba(248, 250, 252, 0.95);
   background: rgba(248, 250, 252, 0.12);
   transform: translateY(-1px);
+}
+
+.vso-preview-item-recent {
+  border-color: rgba(248, 250, 252, 0.35);
+  background: rgba(248, 250, 252, 0.07);
+}
+
+.vso-preview-item-recent::after {
+  opacity: 1;
+}
+
+.vso-preview-item-upcoming {
+  border-color: rgba(125, 211, 252, calc(0.16 + var(--vso-upcoming-warmth, 0) * 0.34));
+  background: rgba(125, 211, 252, calc(0.035 + var(--vso-upcoming-warmth, 0) * 0.075));
+}
+
+.vso-preview-item-upcoming .vso-preview-text {
+  color: rgba(255, 255, 255, calc(0.62 + var(--vso-upcoming-warmth, 0) * 0.38));
 }
 
 .vso-preview-time {
@@ -637,4 +672,180 @@
   text-align: center;
   box-shadow: 0 10px 28px rgba(15, 23, 42, 0.32);
   backdrop-filter: blur(10px);
+}
+
+.vso-panel,
+.vso-panel * {
+  box-sizing: border-box !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+}
+
+.vso-panel {
+  background: rgba(15, 23, 42, 0.96) !important;
+  color: #fff !important;
+}
+
+.vso-panel button,
+.vso-panel input {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+}
+
+.vso-panel-title,
+.vso-panel-heading,
+.vso-search-item-title,
+.vso-library-item-title,
+.vso-preview-text {
+  color: #fff !important;
+}
+
+.vso-panel-subtitle,
+.vso-search-feedback,
+.vso-search-item-meta,
+.vso-manual-hint,
+.vso-library-item-meta,
+.vso-shortcut-hint,
+.vso-preview-empty {
+  color: rgba(255, 255, 255, 0.68) !important;
+}
+
+.vso-field label,
+.vso-field span,
+.vso-delay-value,
+.vso-preview-title {
+  color: rgba(255, 255, 255, 0.82) !important;
+}
+
+.vso-tab {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: rgba(255, 255, 255, 0.78) !important;
+}
+
+.vso-tab-active,
+.vso-action-primary {
+  background: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+.vso-search-shell {
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  background: rgba(255, 255, 255, 0.035) !important;
+}
+
+.vso-file,
+.vso-text-input,
+.vso-color {
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #fff !important;
+}
+
+.vso-text-input::placeholder {
+  color: rgba(255, 255, 255, 0.48) !important;
+}
+
+.vso-action-secondary,
+.vso-language-button {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #fff !important;
+}
+
+.vso-language-button:hover,
+.vso-link-button:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+.vso-link-button,
+.vso-library-action,
+.vso-library-clear {
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.78) !important;
+}
+
+.vso-search-feedback[data-tone="error"] {
+  color: #fca5a5 !important;
+}
+
+.vso-search-feedback[data-tone="success"] {
+  color: #86efac !important;
+}
+
+.vso-search-item,
+.vso-manual-source,
+.vso-current-subtitle,
+.vso-library-section,
+.vso-library-item,
+.vso-preview-item {
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  color: #fff !important;
+}
+
+.vso-search-item-expanded {
+  border-color: rgba(248, 250, 252, 0.22) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+.vso-current-subtitle-compact {
+  background: rgba(255, 255, 255, 0.025) !important;
+}
+
+.vso-current-subtitle-label {
+  color: rgba(255, 255, 255, 0.5) !important;
+}
+
+.vso-current-subtitle-name {
+  color: rgba(255, 255, 255, 0.88) !important;
+}
+
+.vso-disclosure {
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  background: rgba(255, 255, 255, 0.03) !important;
+  color: rgba(255, 255, 255, 0.88) !important;
+}
+
+.vso-disclosure-open {
+  border-color: rgba(248, 250, 252, 0.2) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+.vso-disclosure-icon {
+  color: rgba(255, 255, 255, 0.6) !important;
+}
+
+.vso-language-empty {
+  background: rgba(255, 255, 255, 0.05) !important;
+  color: rgba(255, 255, 255, 0.7) !important;
+}
+
+.vso-library-title {
+  color: rgba(255, 255, 255, 0.84) !important;
+}
+
+.vso-status,
+.vso-preview-time {
+  color: rgba(255, 255, 255, 0.72) !important;
+}
+
+.vso-preview-item-active {
+  border-color: rgba(248, 250, 252, 0.95) !important;
+  background: rgba(248, 250, 252, 0.12) !important;
+}
+
+.vso-preview-item-recent {
+  border-color: rgba(248, 250, 252, 0.35) !important;
+  background: rgba(248, 250, 252, 0.07) !important;
+}
+
+.vso-preview-item::after {
+  background: rgba(248, 250, 252, 0.7) !important;
+}
+
+.vso-preview-item-upcoming {
+  border-color: rgba(125, 211, 252, calc(0.16 + var(--vso-upcoming-warmth, 0) * 0.34)) !important;
+  background: rgba(125, 211, 252, calc(0.035 + var(--vso-upcoming-warmth, 0) * 0.075)) !important;
+}
+
+.vso-preview-item-upcoming .vso-preview-text {
+  color: rgba(255, 255, 255, calc(0.62 + var(--vso-upcoming-warmth, 0) * 0.38)) !important;
 }

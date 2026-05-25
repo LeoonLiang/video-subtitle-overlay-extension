@@ -92,7 +92,18 @@ Chrome 或 Edge 里加载扩展时，选择这个 `dist/chrome` 目录。
 
 - 执行 `npm run package:release`
 - 生成 `dist/release/video-subtitle-overlay-extension.zip`
+- 从 `CHANGELOG.md` 提取当前 tag 对应的更新说明
+- 生成 `dist/release/release-notes.md`
 - 上传到对应的 GitHub Release
+
+发布前，在 `CHANGELOG.md` 增加一个与 tag 匹配的段落，例如：
+
+```md
+## v1.1.0
+
+- 新增字幕菜单
+- 优化当前字幕高亮
+```
 
 `.gitignore` 已忽略：
 

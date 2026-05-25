@@ -157,6 +157,73 @@
     };
   }
 
+  function clampNumber(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function roundProgress(value) {
+    return Math.round(value * 1000) / 1000;
+  }
+
+  function getSubtitleMenuViewState({ cues, activeCueIndex, autoFollow, currentTime }) {
+    const baseState = getPreviewViewState({ cues, activeCueIndex, autoFollow });
+
+    if (baseState.mode === "empty") {
+      return {
+        ...baseState,
+        recentCueIndex: -1,
+        upcomingCueIndex: -1,
+        gapProgress: 0,
+        upcomingWarmth: 0
+      };
+    }
+
+    if (baseState.activeCueIndex >= 0) {
+      return {
+        ...baseState,
+        recentCueIndex: -1,
+        upcomingCueIndex: -1,
+        gapProgress: 1,
+        upcomingWarmth: 0
+      };
+    }
+
+    const safeTime = Number.isFinite(currentTime) ? currentTime : 0;
+    let recentCueIndex = -1;
+    let upcomingCueIndex = -1;
+
+    for (let index = 0; index < cues.length; index += 1) {
+      const cue = cues[index];
+      if (cue.end <= safeTime) {
+        recentCueIndex = index;
+        continue;
+      }
+      if (cue.start > safeTime) {
+        upcomingCueIndex = index;
+        break;
+      }
+    }
+
+    const recentCue = recentCueIndex >= 0 ? cues[recentCueIndex] : null;
+    const upcomingCue = upcomingCueIndex >= 0 ? cues[upcomingCueIndex] : null;
+    const gapDuration = recentCue && upcomingCue ? upcomingCue.start - recentCue.end : 0;
+    const gapProgress = gapDuration > 0
+      ? clampNumber((safeTime - recentCue.end) / gapDuration, 0, 1)
+      : 0;
+    const secondsToNext = upcomingCue ? upcomingCue.start - safeTime : Number.POSITIVE_INFINITY;
+    const upcomingWarmth = Number.isFinite(secondsToNext)
+      ? clampNumber(1 - secondsToNext / 3, 0, 1)
+      : 0;
+
+    return {
+      ...baseState,
+      recentCueIndex,
+      upcomingCueIndex,
+      gapProgress: roundProgress(gapProgress),
+      upcomingWarmth: roundProgress(upcomingWarmth)
+    };
+  }
+
   function buildPageMemoryRecord({ delayMs, subtitleSource, updatedAt }) {
     return {
       delayMs: Number.isFinite(delayMs) ? delayMs : 0,
@@ -314,6 +381,7 @@
       getSeekTimeForCue,
       findCueIndexAtTime,
       getPreviewViewState,
+      getSubtitleMenuViewState,
       buildPageMemoryRecord,
       upsertPageMemoryEntry,
       upsertSubtitleHistoryEntry,

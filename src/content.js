@@ -27,6 +27,7 @@
     previewItems: [],
     previewIgnoreScroll: false,
     previewIgnoreTimer: 0,
+    previewScrollIndex: -1,
     searchKeyword: "",
     searchResults: [],
     expandedResultUrl: "",
@@ -82,6 +83,10 @@
         activeCueIndex,
         showResumeButton: autoFollow === false
       });
+  const getSubtitleMenuViewState =
+    typeof helpers.getSubtitleMenuViewState === "function"
+      ? helpers.getSubtitleMenuViewState
+      : getPreviewViewState;
   const buildPageMemoryRecord =
     typeof helpers.buildPageMemoryRecord === "function"
       ? helpers.buildPageMemoryRecord
@@ -134,6 +139,7 @@
     <div class="vso-panel-title">字幕设置</div>
     <div class="vso-tabs" role="tablist" aria-label="字幕面板">
       <button id="vso-tab-load" class="vso-tab vso-tab-active" type="button" role="tab" aria-selected="true">加载</button>
+      <button id="vso-tab-preview" class="vso-tab" type="button" role="tab" aria-selected="false">字幕</button>
       <button id="vso-tab-library" class="vso-tab" type="button" role="tab" aria-selected="false">历史收藏</button>
       <button id="vso-tab-settings" class="vso-tab" type="button" role="tab" aria-selected="false">设置</button>
     </div>
@@ -188,6 +194,14 @@
           </div>
         </div>
       </div>
+    </div>
+    <div id="vso-panel-preview" class="vso-tab-panel vso-hidden">
+      <div class="vso-preview-header">
+        <div class="vso-preview-title">当前字幕</div>
+        <button id="vso-preview-resume" class="vso-action vso-action-secondary vso-preview-resume vso-hidden" type="button">跟随播放</button>
+      </div>
+      <div id="vso-preview-empty" class="vso-preview-empty">加载字幕后会在这里显示全文。</div>
+      <div id="vso-preview-list" class="vso-preview-list vso-hidden"></div>
     </div>
     <div id="vso-panel-library" class="vso-tab-panel vso-hidden">
       <div class="vso-library-section">
@@ -293,9 +307,11 @@
 
   const ui = {
     tabLoad: panel.querySelector("#vso-tab-load"),
+    tabPreview: panel.querySelector("#vso-tab-preview"),
     tabLibrary: panel.querySelector("#vso-tab-library"),
     tabSettings: panel.querySelector("#vso-tab-settings"),
     loadPanel: panel.querySelector("#vso-panel-load"),
+    previewPanel: panel.querySelector("#vso-panel-preview"),
     libraryPanel: panel.querySelector("#vso-panel-library"),
     settingsPanel: panel.querySelector("#vso-panel-settings"),
     currentToggleVisibilityButton: panel.querySelector("#vso-current-toggle-visibility"),
@@ -333,9 +349,9 @@
     status: panel.querySelector("#vso-status")
   };
 
-  ui.previewResumeButton = document.createElement("button");
-  ui.previewEmpty = document.createElement("div");
-  ui.previewList = document.createElement("div");
+  ui.previewResumeButton = panel.querySelector("#vso-preview-resume");
+  ui.previewEmpty = panel.querySelector("#vso-preview-empty");
+  ui.previewList = panel.querySelector("#vso-preview-list");
 
   const hasChromeStorage =
     typeof chrome !== "undefined" &&
@@ -616,19 +632,26 @@
   }
 
   function setPanelTab(tab) {
-    state.panelTab = tab === "library" || tab === "settings" ? tab : "load";
+    state.panelTab = tab === "preview" || tab === "library" || tab === "settings" ? tab : "load";
     const showingLoad = state.panelTab === "load";
+    const showingPreview = state.panelTab === "preview";
     const showingLibrary = state.panelTab === "library";
     const showingSettings = state.panelTab === "settings";
     ui.tabLoad.classList.toggle("vso-tab-active", showingLoad);
+    ui.tabPreview.classList.toggle("vso-tab-active", showingPreview);
     ui.tabLibrary.classList.toggle("vso-tab-active", showingLibrary);
     ui.tabSettings.classList.toggle("vso-tab-active", showingSettings);
     ui.tabLoad.setAttribute("aria-selected", String(showingLoad));
+    ui.tabPreview.setAttribute("aria-selected", String(showingPreview));
     ui.tabLibrary.setAttribute("aria-selected", String(showingLibrary));
     ui.tabSettings.setAttribute("aria-selected", String(showingSettings));
     ui.loadPanel.classList.toggle("vso-hidden", !showingLoad);
+    ui.previewPanel.classList.toggle("vso-hidden", !showingPreview);
     ui.libraryPanel.classList.toggle("vso-hidden", !showingLibrary);
     ui.settingsPanel.classList.toggle("vso-hidden", !showingSettings);
+    if (showingPreview) {
+      renderPreview(true);
+    }
   }
 
   function setLoadDisclosure(section) {
@@ -995,9 +1018,16 @@
     });
   }
 
-  function markPreviewActiveCue() {
+  function markPreviewCueStates(viewState) {
     state.previewItems.forEach((item, index) => {
-      item.classList.toggle("vso-preview-item-active", index === state.activeCueIndex);
+      const isActive = index === viewState.activeCueIndex;
+      const isRecent = index === viewState.recentCueIndex;
+      const isUpcoming = index === viewState.upcomingCueIndex;
+      item.classList.toggle("vso-preview-item-active", isActive);
+      item.classList.toggle("vso-preview-item-recent", isRecent);
+      item.classList.toggle("vso-preview-item-upcoming", isUpcoming);
+      item.style.setProperty("--vso-gap-progress", isRecent ? String(viewState.gapProgress) : "0");
+      item.style.setProperty("--vso-upcoming-warmth", isUpcoming ? String(viewState.upcomingWarmth) : "0");
     });
   }
 
@@ -1011,7 +1041,7 @@
       return;
     }
 
-    const activeItem = state.previewItems[state.activeCueIndex];
+    const activeItem = state.previewItems[state.previewScrollIndex];
     if (!activeItem) {
       return;
     }
@@ -1039,11 +1069,19 @@
   }
 
   function renderPreview(forceScroll = false) {
-    const viewState = getPreviewViewState({
+    const viewState = getSubtitleMenuViewState({
       cues: state.cues,
       activeCueIndex: state.activeCueIndex,
-      autoFollow: state.previewAutoFollow
+      autoFollow: state.previewAutoFollow,
+      currentTime: state.activeVideo
+        ? getPreviewTime(state.activeVideo.currentTime, state.settings.delayMs)
+        : 0
     });
+    state.previewScrollIndex = viewState.activeCueIndex >= 0
+      ? viewState.activeCueIndex
+      : viewState.upcomingCueIndex >= 0
+        ? viewState.upcomingCueIndex
+        : viewState.recentCueIndex;
 
     if (state.previewItems.length !== state.cues.length) {
       buildPreviewList();
@@ -1061,7 +1099,7 @@
       return;
     }
 
-    markPreviewActiveCue();
+    markPreviewCueStates(viewState);
     if (forceScroll || state.previewAutoFollow) {
       syncPreviewScroll(forceScroll);
     }
@@ -1892,6 +1930,10 @@
     setPanelTab("load");
   });
 
+  ui.tabPreview.addEventListener("click", () => {
+    setPanelTab("preview");
+  });
+
   ui.tabLibrary.addEventListener("click", () => {
     setPanelTab("library");
   });
@@ -1918,6 +1960,18 @@
     updateCurrentSubtitleDisplay();
     setStatus(state.subtitleVisible ? "字幕已显示" : "字幕已隐藏");
     renderSubtitle();
+  });
+
+  ui.previewResumeButton.addEventListener("click", () => {
+    setPreviewAutoFollow(true);
+    syncPreviewScroll(true);
+  });
+
+  ui.previewList.addEventListener("scroll", () => {
+    if (state.previewIgnoreScroll) {
+      return;
+    }
+    setPreviewAutoFollow(false);
   });
 
   ui.historyList.addEventListener("click", (event) => {

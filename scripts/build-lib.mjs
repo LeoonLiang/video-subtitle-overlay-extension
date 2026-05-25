@@ -21,6 +21,10 @@ export function getReleaseArchiveName() {
   return "video-subtitle-overlay-extension.zip";
 }
 
+export function getReleaseNotesName() {
+  return "release-notes.md";
+}
+
 export function normalizeExtensionVersion(input) {
   const rawValue = String(input || "").trim();
   const normalized = rawValue.startsWith("v") ? rawValue.slice(1) : rawValue;
@@ -43,8 +47,70 @@ export function getProjectPaths(rootDir) {
       "dist",
       "release",
       getReleaseArchiveName()
-    )
+    ),
+    releaseNotesPath: resolve(rootDir, "dist", "release", getReleaseNotesName())
   };
+}
+
+function normalizeVersionHeading(input) {
+  return normalizeExtensionVersion(input);
+}
+
+export function pickChangelogSection(changelogContent, tagName) {
+  const targetVersion = normalizeVersionHeading(tagName);
+  const lines = String(changelogContent || "").replace(/\r/g, "").split("\n");
+  let collecting = false;
+  const sectionLines = [];
+
+  for (const line of lines) {
+    const headingMatch = line.match(/^##\s+(.+?)\s*$/);
+
+    if (headingMatch) {
+      if (collecting) {
+        break;
+      }
+
+      const headingText = headingMatch[1].trim();
+
+      try {
+        collecting = normalizeVersionHeading(headingText) === targetVersion;
+      } catch (error) {
+        collecting = false;
+      }
+
+      continue;
+    }
+
+    if (collecting) {
+      sectionLines.push(line);
+    }
+  }
+
+  const section = sectionLines.join("\n").trim();
+
+  if (!section) {
+    throw new Error(`Missing CHANGELOG section for ${tagName}`);
+  }
+
+  return section;
+}
+
+export function buildReleaseNotes({ tagName, changelogContent }) {
+  const changes = pickChangelogSection(changelogContent, tagName);
+
+  return [
+    "## 本次更新",
+    "",
+    changes,
+    "",
+    "## 安装方式",
+    "",
+    `1. 下载 \`${getReleaseArchiveName()}\``,
+    "2. 解压 zip 文件",
+    "3. 在 Chrome 或 Edge 扩展管理页选择“加载已解压的扩展程序”",
+    "4. 选择解压后的目录",
+    ""
+  ].join("\n");
 }
 
 export function ensureDir(dirPath) {
