@@ -8,7 +8,8 @@
     backgroundColor: "#000000",
     backgroundOpacity: 0.55,
     fontSize: 16,
-    delayMs: 0
+    delayMs: 0,
+    keepRecords: false
   };
   const DELAY_STEP_MS = 500;
 
@@ -45,7 +46,8 @@
     settingsLoaded: false,
     siteStateLoaded: false,
     libraryLoaded: false,
-    pageMemoryRestored: false
+    pageMemoryRestored: false,
+    privacyEnforced: false
   };
   const helpers = globalThis.__VSO_HELPERS__ || {};
   const SITE_STORAGE_KEY = helpers.SITE_STORAGE_KEY || "vso-enabled-sites";
@@ -75,6 +77,10 @@
     typeof helpers.findCueIndexAtTime === "function"
       ? helpers.findCueIndexAtTime
       : () => -1;
+  const formatCueTimeLabel =
+    typeof helpers.formatCueTimeLabel === "function"
+      ? helpers.formatCueTimeLabel
+      : (seconds) => formatTime(seconds).slice(3, 8);
   const getPreviewViewState =
     typeof helpers.getPreviewViewState === "function"
       ? helpers.getPreviewViewState
@@ -207,7 +213,11 @@
       <div class="vso-library-section">
         <div class="vso-library-header">
           <div class="vso-manual-title">历史与收藏</div>
+          <button id="vso-records-clear-all" class="vso-link-button vso-library-clear" type="button">清空全部记录</button>
+        </div>
+        <div class="vso-library-actions">
           <button id="vso-page-memory-clear" class="vso-link-button vso-library-clear" type="button">清除当前页面记忆</button>
+          <span class="vso-library-hint">清空全部记录会同时清掉最近使用、我的收藏和所有页面记忆。</span>
         </div>
         <div class="vso-library-group">
           <div class="vso-library-title">最近使用</div>
@@ -260,6 +270,13 @@
             <button id="vso-delay-later" class="vso-action vso-action-secondary" type="button">字幕延后 0.5s</button>
           </div>
           <div id="vso-delay-value" class="vso-delay-value">当前偏移：0.0s</div>
+        </div>
+        <div class="vso-field">
+          <div class="vso-toggle-row">
+            <input id="vso-keep-records" class="vso-toggle" type="checkbox">
+            <label for="vso-keep-records">不保留任何记录</label>
+          </div>
+          <div class="vso-manual-hint">选中后不保存最近使用、页面记忆和搜索关键词；首次选中会立即清空已有的历史、收藏和页面记忆。</div>
         </div>
         <div class="vso-field">
           <span>快捷键</span>
@@ -332,6 +349,8 @@
     historyList: panel.querySelector("#vso-history-list"),
     historyEmpty: panel.querySelector("#vso-history-empty"),
     historyClearButton: panel.querySelector("#vso-history-clear"),
+    recordsClearAllButton: panel.querySelector("#vso-records-clear-all"),
+    keepRecordsToggle: panel.querySelector("#vso-keep-records"),
     favoritesList: panel.querySelector("#vso-favorites-list"),
     favoritesEmpty: panel.querySelector("#vso-favorites-empty"),
     favoritesClearButton: panel.querySelector("#vso-favorites-clear"),
@@ -405,6 +424,7 @@
     ui.fontSize.value = String(state.settings.fontSize);
     ui.fontSizeValue.textContent = `${state.settings.fontSize}px`;
     ui.delayValue.textContent = `当前偏移：${formatDelayLabel(state.settings.delayMs)}`;
+    ui.keepRecordsToggle.checked = !shouldKeepRecords();
     updateSubtitleStyles();
     updateHideButtonLabel();
   }
@@ -501,6 +521,16 @@
     ui.hideButton.textContent = state.subtitleVisible ? "隐藏字幕" : "显示字幕";
   }
 
+  // 默认不保留任何记录：只有用户主动关掉「不保留任何记录」才写入存储。
+  const shouldKeepRecordsSetting =
+    typeof helpers.shouldKeepRecords === "function"
+      ? helpers.shouldKeepRecords
+      : (settings) => settings?.keepRecords === true;
+
+  function shouldKeepRecords() {
+    return shouldKeepRecordsSetting(state.settings);
+  }
+
   function persistCollection(key, value, onSuccess) {
     if (!hasChromeStorage) {
       if (typeof onSuccess === "function") {
@@ -551,6 +581,10 @@
   }
 
   function persistCurrentPageMemory() {
+    if (!shouldKeepRecords()) {
+      return;
+    }
+
     const subtitleSource = getCurrentPageMemorySource();
     if (!subtitleSource) {
       return;
@@ -571,6 +605,12 @@
 
   function persistSubtitleUsage(source) {
     state.currentSubtitleSource = source;
+    updateCurrentSubtitleDisplay();
+
+    if (!shouldKeepRecords()) {
+      return;
+    }
+
     persistCurrentPageMemory();
 
     const nextHistory = upsertSubtitleHistoryEntry(
@@ -672,6 +712,7 @@
     if (!hasChromeStorage) {
       state.settingsLoaded = true;
       syncControls();
+      enforcePrivacyOnLoad();
       void restorePageMemoryIfNeeded();
       return;
     }
@@ -679,6 +720,7 @@
       if (chrome.runtime?.lastError) {
         state.settingsLoaded = true;
         syncControls();
+        enforcePrivacyOnLoad();
         void restorePageMemoryIfNeeded();
         return;
       }
@@ -689,6 +731,7 @@
       state.settingsLoaded = true;
       syncControls();
       renderSubtitle();
+      enforcePrivacyOnLoad();
       void restorePageMemoryIfNeeded();
     });
   }
@@ -737,6 +780,7 @@
     if (!hasChromeStorage) {
       state.libraryLoaded = true;
       renderLibrary();
+      enforcePrivacyOnLoad();
       void restorePageMemoryIfNeeded();
       return;
     }
@@ -747,6 +791,7 @@
         if (chrome.runtime?.lastError) {
           state.libraryLoaded = true;
           renderLibrary();
+          enforcePrivacyOnLoad();
           void restorePageMemoryIfNeeded();
           return;
         }
@@ -756,6 +801,7 @@
         state.favorites = Array.isArray(result[FAVORITES_STORAGE_KEY]) ? result[FAVORITES_STORAGE_KEY] : [];
         state.libraryLoaded = true;
         renderLibrary();
+        enforcePrivacyOnLoad();
         void restorePageMemoryIfNeeded();
       }
     );
@@ -778,8 +824,17 @@
     return `${hours}:${minutes}:${secs}.${millis}`;
   }
 
+  // WebVTT 的 cue 参数（align:start line:0%）和 SRT 的定位标签（X1:.. Y1:..）会跟在时间码后面，
+  // 直接按冒号全切会得到 4 段以上而整条作废，所以这里只取开头那段纯时间码。
+  function extractTimestampToken(input) {
+    const match = String(input || "")
+      .trim()
+      .match(/^\d{1,3}:\d{1,2}:\d{1,2}[.,]\d{1,3}|^\d{1,3}:\d{1,2}[.,]\d{1,3}/);
+    return match ? match[0] : String(input || "").trim().split(/\s+/)[0];
+  }
+
   function parseTimestamp(input) {
-    const normalized = input.trim().replace(",", ".");
+    const normalized = extractTimestampToken(input).replace(",", ".");
     const parts = normalized.split(":");
     if (parts.length < 2 || parts.length > 3) {
       return Number.NaN;
@@ -825,10 +880,14 @@
         continue;
       }
       const textLines = lines.slice(lines.indexOf(timingLine) + 1);
+      const text = normalizeText(textLines.join("\n"));
+      if (!text) {
+        continue;
+      }
       cues.push({
         start,
         end,
-        text: normalizeText(textLines.join("\n"))
+        text
       });
     }
     return cues;
@@ -994,7 +1053,7 @@
 
       const time = document.createElement("div");
       time.className = "vso-preview-time";
-      time.textContent = formatTime(cue.start).slice(3, 8);
+      time.textContent = formatCueTimeLabel(cue.start);
 
       const text = document.createElement("div");
       text.className = "vso-preview-text";
@@ -1563,6 +1622,77 @@
     );
   }
 
+  function applyKeepRecordsSetting(keepRecords) {
+    state.settings.keepRecords = keepRecords === true;
+    saveSettings();
+    syncControls();
+
+    if (shouldKeepRecords()) {
+      setStatus("将开始保留最近使用、页面记忆和搜索关键词");
+      return;
+    }
+
+    clearStoredRecords({ includeFavorites: true });
+    setStatus("已开启不保留任何记录，并清空已有记录");
+  }
+
+  // 抹掉已存的记录。includeFavorites 只在用户主动要求时为 true：
+  // 隐私模式自己触发的清理不能连收藏一起抹，否则每次打开页面都会丢掉收藏。
+  function clearStoredRecords({ includeFavorites }) {
+    const payload = {
+      [PAGE_MEMORY_STORAGE_KEY]: {},
+      [HISTORY_STORAGE_KEY]: []
+    };
+
+    if (includeFavorites) {
+      payload[FAVORITES_STORAGE_KEY] = [];
+    }
+
+    state.searchKeyword = "";
+    ui.searchInput.value = "";
+    state.currentSubtitleSource = null;
+    state.pageMemory = {};
+    state.history = [];
+
+    if (includeFavorites) {
+      state.favorites = [];
+    }
+
+    if (hasChromeStorage) {
+      chrome.storage.local.set(payload, () => {
+        if (chrome.runtime?.lastError) {
+          setStatus(chrome.runtime.lastError.message || "清空记录失败");
+        }
+      });
+    }
+
+    updateCurrentSubtitleDisplay();
+    renderLibrary();
+  }
+
+  // 隐私模式是默认状态，所以升级上来时把之前留下的历史和页面记忆也清掉。
+  // 要等设置和记录都读回来才知道有没有东西可清，而且只在真有记录时写一次存储。
+  function enforcePrivacyOnLoad() {
+    if (state.privacyEnforced || !state.settingsLoaded || !state.libraryLoaded) {
+      return;
+    }
+
+    state.privacyEnforced = true;
+
+    if (shouldKeepRecords()) {
+      return;
+    }
+
+    const hasStoredRecords =
+      Object.keys(state.pageMemory).length > 0 || state.history.length > 0;
+
+    if (!hasStoredRecords) {
+      return;
+    }
+
+    clearStoredRecords({ includeFavorites: false });
+  }
+
   function clearCurrentPageMemory() {
     const pageUrl = getCurrentPageUrl();
     const nextPageMemory = { ...state.pageMemory };
@@ -1589,17 +1719,22 @@
 
     const pageUrl = getCurrentPageUrl();
     const existingRecord = state.pageMemory[pageUrl];
-    const nextPageMemory = upsertPageMemoryEntry(
-      state.pageMemory,
-      pageUrl,
-      buildPageMemoryRecord({
-        delayMs: state.settings.delayMs,
-        subtitleSource: null,
-        updatedAt: Date.now()
-      })
-    );
 
-    savePageMemory(nextPageMemory);
+    // 隐私模式下不写任何页面记忆，包括这条「已清空」的记录。
+    if (shouldKeepRecords()) {
+      const nextPageMemory = upsertPageMemoryEntry(
+        state.pageMemory,
+        pageUrl,
+        buildPageMemoryRecord({
+          delayMs: state.settings.delayMs,
+          subtitleSource: null,
+          updatedAt: Date.now()
+        })
+      );
+
+      savePageMemory(nextPageMemory);
+    }
+
     setStatus(existingRecord?.subtitleSource ? "已清空当前字幕" : "当前没有可清空的字幕");
     updateCurrentSubtitleDisplay();
   }
@@ -1742,12 +1877,23 @@
   }
 
   function resetSettings() {
+    const wasKeepingRecords = shouldKeepRecords();
     state.settings = { ...DEFAULT_SETTINGS };
-    syncControls();
     saveSettings();
+    syncControls();
+    renderSubtitle();
+
+    // 恢复默认会把隐私模式打开，如果之前是保留记录的状态，这里要跟着清掉。
+    if (wasKeepingRecords) {
+      applyKeepRecordsSetting(false);
+      setStatus(
+        `已恢复默认设置并开启不保留任何记录，已清空已有记录，当前字幕偏移 ${formatDelayLabel(state.settings.delayMs)}`
+      );
+      return;
+    }
+
     persistCurrentPageMemory();
     setStatus(`当前字幕偏移 ${formatDelayLabel(state.settings.delayMs)}`);
-    renderSubtitle();
   }
 
   button.addEventListener("click", () => togglePanel());
@@ -2024,6 +2170,34 @@
 
   ui.pageMemoryClearButton.addEventListener("click", () => {
     clearCurrentPageMemory();
+  });
+
+  // 清空全部记录不可撤销，所以要点两次：第一次把按钮变成确认态，第二次才真清。
+  let clearAllArmed = false;
+  let clearAllTimer = 0;
+
+  ui.recordsClearAllButton.addEventListener("click", () => {
+    window.clearTimeout(clearAllTimer);
+
+    if (!clearAllArmed) {
+      clearAllArmed = true;
+      ui.recordsClearAllButton.textContent = "再次点击确认清空";
+      clearAllTimer = window.setTimeout(() => {
+        clearAllArmed = false;
+        ui.recordsClearAllButton.textContent = "清空全部记录";
+      }, 4000);
+      setStatus("点击「再次点击确认清空」以清掉全部记录");
+      return;
+    }
+
+    clearAllArmed = false;
+    ui.recordsClearAllButton.textContent = "清空全部记录";
+    clearStoredRecords({ includeFavorites: true });
+    setStatus("已清空全部记录");
+  });
+
+  ui.keepRecordsToggle.addEventListener("change", () => {
+    applyKeepRecordsSetting(!ui.keepRecordsToggle.checked);
   });
 
   ui.hideButton.addEventListener("click", () => {

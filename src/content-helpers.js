@@ -117,6 +117,8 @@
     return Math.max(0, safeCueStart - safeDelayMs / 1000);
   }
 
+  // 字幕可能互相重叠（双语同时间戳、长句里嵌短句等），纯二分查找会漏掉当前句，
+  // 所以二分定位到插入点后再向前回扫，取最后一条真正覆盖 time 的字幕。
   function findCueIndexAtTime(cues, time) {
     if (!Array.isArray(cues) || cues.length === 0) {
       return -1;
@@ -138,7 +140,39 @@
       }
     }
 
+    for (let index = left - 1; index >= 0; index -= 1) {
+      const cue = cues[index];
+      if (time >= cue.start && time <= cue.end) {
+        return index;
+      }
+    }
+
     return -1;
+  }
+
+  // 列表里的时间标签不能像以前那样直接切掉小时位，
+  // 否则一小时以后的字幕会全部显示成 00:00 / 30:00 这种对不上的时间。
+  function formatCueTimeLabel(seconds) {
+    const safeSeconds = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+    const totalSeconds = Math.floor(safeSeconds);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
+    const paddedMinutes = String(minutes).padStart(2, "0");
+    const paddedSeconds = String(secs).padStart(2, "0");
+
+    if (hours > 0) {
+      return `${hours}:${paddedMinutes}:${paddedSeconds}`;
+    }
+
+    return `${paddedMinutes}:${paddedSeconds}`;
+  }
+
+  // 默认不保留任何记录：只有用户在设置里主动关掉开关才会写入存储。
+  const DEFAULT_KEEP_RECORDS = false;
+
+  function shouldKeepRecords(settings) {
+    return Boolean(settings && settings.keepRecords === true);
   }
 
   function getPreviewViewState({ cues, activeCueIndex, autoFollow }) {
@@ -380,8 +414,11 @@
       getPreviewTime,
       getSeekTimeForCue,
       findCueIndexAtTime,
+      formatCueTimeLabel,
       getPreviewViewState,
       getSubtitleMenuViewState,
+      DEFAULT_KEEP_RECORDS,
+      shouldKeepRecords,
       buildPageMemoryRecord,
       upsertPageMemoryEntry,
       upsertSubtitleHistoryEntry,

@@ -184,6 +184,29 @@
   width: 100%;
 }
 
+.vso-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vso-toggle {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: #f8fafc;
+  cursor: pointer;
+}
+
+.vso-library-hint {
+  flex: 1 1 100%;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.6);
+}
+
 .vso-range-value {
   min-width: 52px;
   text-align: right;
@@ -702,6 +725,7 @@
 .vso-search-feedback,
 .vso-search-item-meta,
 .vso-manual-hint,
+.vso-library-hint,
 .vso-library-item-meta,
 .vso-shortcut-hint,
 .vso-preview-empty {
