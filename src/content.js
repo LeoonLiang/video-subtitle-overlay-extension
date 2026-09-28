@@ -23,6 +23,7 @@
     expandedLoadSection: "",
     hoverLocked: false,
     siteEnabled: false,
+    sitePageUrl: "",
     activeCueIndex: -1,
     previewAutoFollow: true,
     previewItems: [],
@@ -50,13 +51,9 @@
     privacyEnforced: false
   };
   const helpers = globalThis.__VSO_HELPERS__ || {};
-  const SITE_STORAGE_KEY = helpers.SITE_STORAGE_KEY || "vso-enabled-sites";
   const resolveUiRoot = typeof helpers.resolveUiRoot === "function"
     ? helpers.resolveUiRoot
     : (doc) => doc.documentElement;
-  const isSiteEnabled = typeof helpers.isSiteEnabled === "function"
-    ? helpers.isSiteEnabled
-    : () => false;
   const getSubtitleFilenameFromUrl =
     typeof helpers.getSubtitleFilenameFromUrl === "function"
       ? helpers.getSubtitleFilenameFromUrl
@@ -457,7 +454,12 @@
   }
 
   function getCurrentPageUrl() {
-    return window.location.href;
+    if (window === window.top) return window.location.href;
+    // about:blank/srcdoc and reused embed URLs are not unique to a watch page.
+    // Keep frame records scoped to the owning page without reading its DOM.
+    return state.sitePageUrl
+      ? `${state.sitePageUrl}#vso-frame=${encodeURIComponent(window.location.href)}`
+      : "";
   }
 
   function createListEntryId(prefix) {
@@ -756,23 +758,16 @@
   }
 
   function loadSiteState() {
-    if (!hasChromeStorage) {
+    const startSiteStateSync = globalThis.__VSO_SITE_STATE__?.startSiteStateSync;
+    if (!startSiteStateSync) {
       state.siteStateLoaded = true;
       applySiteEnabled(false);
       return;
     }
-
-    chrome.storage.local.get(SITE_STORAGE_KEY, (result) => {
-      if (chrome.runtime?.lastError) {
-        state.siteStateLoaded = true;
-        applySiteEnabled(false);
-        return;
-      }
-
+    startSiteStateSync(globalThis.chrome, (enabled, pageUrl) => {
+      state.sitePageUrl = pageUrl;
       state.siteStateLoaded = true;
-      applySiteEnabled(
-        isSiteEnabled(result[SITE_STORAGE_KEY] || {}, window.location.href)
-      );
+      applySiteEnabled(enabled);
     });
   }
 
@@ -1021,17 +1016,17 @@
     button.style.left = `${Math.max(12, rect.right - button.offsetWidth - 12)}px`;
 
     if (state.panelOpen) {
-      const panelTop = Math.min(
+      panel.classList.remove("vso-hidden");
+      const panelTop = Math.max(12, Math.min(
         window.innerHeight - panel.offsetHeight - 12,
         Math.max(12, rect.top + 56)
-      );
-      const panelLeft = Math.min(
+      ));
+      const panelLeft = Math.max(12, Math.min(
         window.innerWidth - panel.offsetWidth - 12,
         Math.max(12, rect.right - panel.offsetWidth)
-      );
+      ));
       panel.style.top = `${panelTop}px`;
       panel.style.left = `${panelLeft}px`;
-      panel.classList.remove("vso-hidden");
     }
 
     subtitleLayer.style.left = `${Math.max(0, rect.left)}px`;
@@ -2237,14 +2232,6 @@
   });
 
   document.addEventListener("keydown", handleShortcut);
-
-  if (chrome.runtime?.onMessage) {
-    chrome.runtime.onMessage.addListener((message) => {
-      if (message?.type === "vso-site-status-changed") {
-        applySiteEnabled(Boolean(message.enabled));
-      }
-    });
-  }
 
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {

@@ -34,6 +34,9 @@
   z-index: 2147483645;
   width: 300px;
   max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 14px;
   border-radius: 16px;
   background: rgba(15, 23, 42, 0.96);

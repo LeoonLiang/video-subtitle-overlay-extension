@@ -238,6 +238,21 @@
 
   if (globalObject.chrome?.runtime?.onMessage) {
     globalObject.chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message?.type === "vso-get-site-context") {
+        // sender.tab describes the address-bar page, including for nested and
+        // cross-origin frames. A frame-supplied URL must not choose the opt-in.
+        const pageUrl = sender.tab?.url || "";
+        try {
+          const url = new URL(pageUrl);
+          sendResponse(/^https?:$/.test(url.protocol)
+            ? { ok: true, pageUrl }
+            : { ok: false });
+        } catch (error) {
+          sendResponse({ ok: false });
+        }
+        return false;
+      }
+
       if (message?.type === "vso-download-subtitle") {
         downloadSubtitleFromUrl(message.url).then((result) => {
           sendResponse(result);

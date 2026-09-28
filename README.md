@@ -5,6 +5,7 @@
 ## 功能
 
 - 自动识别当前页面中的视频元素
+- 支持同域、跨域、嵌套和动态加载的 iframe 播放器；字幕和面板显示在播放器所在的 frame 内
 - 默认不在任何网站启用，按站点单独开启
 - 在视频右上角悬浮一个“字幕”按钮
 - 支持加载本地字幕文件：
@@ -116,4 +117,21 @@ Chrome 或 Edge 里加载扩展时，选择这个 `dist/chrome` 目录。
 - 某些站点如果使用复杂自定义播放器或特殊全屏层，按钮定位可能还需要针对性适配。
 - 当前逻辑优先选择鼠标悬停的视频，否则选择页面中可见面积最大的 `video`。
 - 站点开关按 hostname 保存，例如 `www.youtube.com` 和 `m.youtube.com` 会分别记录。
+- iframe 播放器跟随地址栏网站的开关，无需单独启用播放器域名；刷新页面或后加载的 iframe 也会读取这个开关。每个 frame 独立选择视频和加载字幕。
+- 开启保留记录后，iframe 的字幕记忆按外层页面和播放器地址共同保存，避免不同页面的空白播放器误恢复同一字幕；同一页面中地址相同的多个 frame 仍共用记忆。
+- 较小的 iframe 中，字幕面板会限制高度并支持滚动；快捷键在播放器所在的 frame 获得焦点时使用。
+- 更新扩展后，需要在扩展管理页重新加载，并刷新已打开的视频页面，新的 iframe 注入配置才会生效。
+- iframe 内播放器容器全屏可保留字幕；浏览器原生 `video` 全屏、画中画和不允许扩展注入的页面仍可能无法显示 HTML 字幕层。
 - 在线字幕需要可直接访问的文本文件链接；如果目标站点本身有鉴权或防盗链限制，可能无法下载。
+
+## iframe 回归测试
+
+`npm test` 包含站点继承和异步状态更新测试。另有真实浏览器测试覆盖 iframe 注入、字幕显示、短面板、播放器容器全屏和开关切换；需自行准备 `playwright-core` 和支持加载扩展的 Chromium / Chrome for Testing：
+
+```bash
+VSO_PLAYWRIGHT_MODULE=/absolute/path/to/playwright-core/index.mjs \
+VSO_CHROMIUM_EXECUTABLE=/absolute/path/to/chromium \
+node tests/iframe-browser.test.mjs
+```
+
+测试使用临时浏览器配置和本地页面，不访问外部播放器网站，不影响日常浏览器数据。
