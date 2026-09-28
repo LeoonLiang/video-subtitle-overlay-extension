@@ -24,6 +24,8 @@
       "js": [
         "content-helpers.js",
         "site-state.js",
+        "preview-list.js",
+        "timing.js",
         "content.js"
       ],
       "css": [

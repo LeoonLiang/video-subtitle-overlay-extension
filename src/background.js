@@ -1,4 +1,8 @@
 (function attachVideoSubtitleOverlayBackground(globalObject) {
+  if (typeof importScripts === "function") {
+    importScripts("content-helpers.js", "storage-service.js");
+  }
+  const dispatchStorage = globalObject.__VSO_STORAGE__?.createStorageService?.(globalObject.chrome);
   const SUBTITLE_CAT_BASE_URL = "https://www.subtitlecat.com";
 
   function decodeHtmlEntities(text) {
@@ -238,6 +242,15 @@
 
   if (globalObject.chrome?.runtime?.onMessage) {
     globalObject.chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message?.type === "vso-storage-action") {
+        if (!dispatchStorage) {
+          sendResponse({ ok: false, error: "Storage service unavailable" });
+          return false;
+        }
+        dispatchStorage(message).then(sendResponse);
+        return true;
+      }
+
       if (message?.type === "vso-get-site-context") {
         // sender.tab describes the address-bar page, including for nested and
         // cross-origin frames. A frame-supplied URL must not choose the opt-in.

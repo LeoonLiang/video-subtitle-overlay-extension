@@ -51,62 +51,8 @@ assert.ok(
   "default settings should ship with record keeping disabled"
 );
 
-for (const guard of [
-  "function persistCurrentPageMemory()",
-  "function persistSubtitleUsage(source)"
-]) {
-  const start = contentSource.indexOf(guard);
-  assert.ok(start >= 0, `${guard} should exist`);
-
-  const body = contentSource.slice(start, contentSource.indexOf("\n  }", start));
-  assert.ok(
-    body.includes("shouldKeepRecords()"),
-    `${guard} should skip writing while records are disabled`
-  );
-}
-
-const clearSubtitleBody = contentSource.slice(
-  contentSource.indexOf("function clearCurrentSubtitle()")
-);
-assert.ok(
-  clearSubtitleBody.slice(0, 600).includes("shouldKeepRecords()"),
-  "clearing the current subtitle should not write page memory while records are disabled"
-);
-
-const clearRecordsBody = contentSource.slice(
-  contentSource.indexOf("function clearStoredRecords("),
-  contentSource.indexOf("function enforcePrivacyOnLoad()")
-);
-assert.ok(
-  clearRecordsBody.includes("includeFavorites"),
-  "clearing stored records should decide separately whether favorites are wiped"
-);
-
-const enforceBody = contentSource.slice(
-  contentSource.indexOf("function enforcePrivacyOnLoad()"),
-  contentSource.indexOf("function clearCurrentPageMemory()")
-);
-assert.ok(
-  enforceBody.includes("includeFavorites: false"),
-  "the privacy pass on load must not wipe favorites on every page load"
-);
-assert.ok(
-  enforceBody.includes("!state.settingsLoaded || !state.libraryLoaded"),
-  "the privacy pass should wait until settings and records are both loaded"
-);
-assert.ok(
-  enforceBody.includes("hasStoredRecords"),
-  "the privacy pass should only write storage when there is something to clear"
-);
-
-const favoriteToggleBody = contentSource.slice(
-  contentSource.indexOf("function toggleFavoriteEntry(entry)"),
-  contentSource.indexOf("function applyKeepRecordsSetting(")
-);
-assert.ok(
-  !favoriteToggleBody.includes("shouldKeepRecords()"),
-  "favorites should keep working while record keeping is disabled"
-);
+// Authoritative privacy clearing and concurrent stale writes are covered by
+// storage-service.test.mjs. They no longer live in content-script functions.
 
 // 面板模板里新增的控件必须真的能被 querySelector 到。
 const panelTemplate = contentSource.slice(

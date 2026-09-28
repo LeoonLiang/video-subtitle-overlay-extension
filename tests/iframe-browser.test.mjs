@@ -116,7 +116,9 @@ try {
     await frame.locator(".vso-button").waitFor({ state: "detached" });
   }
   await page.reload();
-  await page.frame({ name: "cross" }).waitForFunction(() => document.querySelector("video")?.dataset.vsoBound === "1");
+  await page.waitForTimeout(400);
+  assert.equal(await page.frame({ name: "cross" }).locator("video[data-vso-bound]").count(), 0,
+    "disabled iframe must not attach playback listeners");
   assert.equal(await page.frame({ name: "cross" }).locator(".vso-button").count(), 0,
     "enabling only the player host must not opt in the outer page");
   await setSites({ "127.0.0.1": true });

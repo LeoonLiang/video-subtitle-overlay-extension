@@ -1,4 +1,20 @@
 (() => {
+  let controller = null;
+  globalThis.__VSO_SITE_STATE__?.startSiteStateSync(globalThis.chrome, (enabled, pageUrl) => {
+    if (!controller && enabled) controller = createController(pageUrl);
+    if (controller) controller.setEnabled(enabled, pageUrl);
+  });
+
+  function createController(initialPageUrl) {
+  const activeListeners = [];
+  const boundVideos = new Map();
+  let activeAbort = null;
+  let activationGeneration = 0;
+  let subtitleLoadRevision = 0;
+  let restoreInProgress = false;
+  function listenActive(target, type, listener, options = false) {
+    activeListeners.push({ target, type, listener, options });
+  }
   const STORAGE_KEY = "vso-settings";
   const PAGE_MEMORY_STORAGE_KEY = "vso-page-memory";
   const HISTORY_STORAGE_KEY = "vso-subtitle-history";
@@ -23,10 +39,10 @@
     expandedLoadSection: "",
     hoverLocked: false,
     siteEnabled: false,
-    sitePageUrl: "",
+    sitePageUrl: initialPageUrl,
     activeCueIndex: -1,
     previewAutoFollow: true,
-    previewItems: [],
+    selectedCueIndex: -1,
     previewIgnoreScroll: false,
     previewIgnoreTimer: 0,
     previewScrollIndex: -1,
@@ -48,7 +64,8 @@
     siteStateLoaded: false,
     libraryLoaded: false,
     pageMemoryRestored: false,
-    privacyEnforced: false
+    timingRate: 1,
+    calibrationAnchor: null
   };
   const helpers = globalThis.__VSO_HELPERS__ || {};
   const resolveUiRoot = typeof helpers.resolveUiRoot === "function"
@@ -62,14 +79,8 @@
     typeof helpers.formatDelayLabel === "function"
       ? helpers.formatDelayLabel
       : (delayMs) => `${delayMs / 1000}s`;
-  const getPreviewTime =
-    typeof helpers.getPreviewTime === "function"
-      ? helpers.getPreviewTime
-      : (currentTime, delayMs) => currentTime + delayMs / 1000;
-  const getSeekTimeForCue =
-    typeof helpers.getSeekTimeForCue === "function"
-      ? helpers.getSeekTimeForCue
-      : (cueStart, delayMs) => Math.max(0, cueStart - delayMs / 1000);
+  const timing = globalThis.__VSO_TIMING__;
+  const currentTiming = () => ({ rate: state.timingRate, delayMs: state.settings.delayMs });
   const findCueIndexAtTime =
     typeof helpers.findCueIndexAtTime === "function"
       ? helpers.findCueIndexAtTime
@@ -90,37 +101,6 @@
     typeof helpers.getSubtitleMenuViewState === "function"
       ? helpers.getSubtitleMenuViewState
       : getPreviewViewState;
-  const buildPageMemoryRecord =
-    typeof helpers.buildPageMemoryRecord === "function"
-      ? helpers.buildPageMemoryRecord
-      : ({ delayMs, subtitleSource, updatedAt }) => ({
-        delayMs,
-        subtitleSource,
-        updatedAt
-      });
-  const upsertPageMemoryEntry =
-    typeof helpers.upsertPageMemoryEntry === "function"
-      ? helpers.upsertPageMemoryEntry
-      : (entries, pageUrl, record) => ({
-        ...(entries || {}),
-        [pageUrl]: record
-      });
-  const upsertSubtitleHistoryEntry =
-    typeof helpers.upsertSubtitleHistoryEntry === "function"
-      ? helpers.upsertSubtitleHistoryEntry
-      : (list, entry) => [entry, ...(Array.isArray(list) ? list : [])];
-  const upsertSubtitleFavoriteEntry =
-    typeof helpers.upsertSubtitleFavoriteEntry === "function"
-      ? helpers.upsertSubtitleFavoriteEntry
-      : (list, entry) => [entry, ...(Array.isArray(list) ? list : [])];
-  const removeSubtitleListEntry =
-    typeof helpers.removeSubtitleListEntry === "function"
-      ? helpers.removeSubtitleListEntry
-      : (list, entryId) => (Array.isArray(list) ? list.filter((entry) => entry?.id !== entryId) : []);
-  const clearSubtitleList =
-    typeof helpers.clearSubtitleList === "function"
-      ? helpers.clearSubtitleList
-      : () => [];
   const isShortcutEventAllowed =
     typeof helpers.isShortcutEventAllowed === "function"
       ? helpers.isShortcutEventAllowed
@@ -205,6 +185,16 @@
       </div>
       <div id="vso-preview-empty" class="vso-preview-empty">加载字幕后会在这里显示全文。</div>
       <div id="vso-preview-list" class="vso-preview-list vso-hidden"></div>
+      <div id="vso-selected-cue" class="vso-selected-cue">选择一句字幕，可查看全文或跳转。</div>
+      <div class="vso-calibration-actions">
+        <button id="vso-cue-seek" class="vso-action vso-action-secondary" type="button" disabled>跳转到这句</button>
+        <button id="vso-calibrate-now" class="vso-action vso-action-primary" type="button" disabled>这句现在说</button>
+        <button id="vso-calibrate-first" class="vso-action vso-action-secondary" type="button" disabled>标记第一句</button>
+        <button id="vso-calibrate-second" class="vso-action vso-action-secondary" type="button" disabled>标记第二句并校准</button>
+        <button id="vso-calibrate-reset" class="vso-action vso-action-secondary" type="button">重置时间校准</button>
+      </div>
+      <div class="vso-manual-hint">先选中台词，在听到这句时点「这句现在说」。若越播越不同步，分别在前后两句说出时标记第一句和第二句；间隔越远越容易校准。</div>
+      <div id="vso-calibration-status" class="vso-manual-hint" aria-live="polite"></div>
     </div>
     <div id="vso-panel-library" class="vso-tab-panel vso-hidden">
       <div class="vso-library-section">
@@ -369,10 +359,79 @@
   ui.previewEmpty = panel.querySelector("#vso-preview-empty");
   ui.previewList = panel.querySelector("#vso-preview-list");
 
-  const hasChromeStorage =
-    typeof chrome !== "undefined" &&
-    chrome.storage &&
-    chrome.storage.local;
+  ui.selectedCue = panel.querySelector("#vso-selected-cue");
+  ui.cueSeek = panel.querySelector("#vso-cue-seek");
+  ui.calibrateNow = panel.querySelector("#vso-calibrate-now");
+  ui.calibrateFirst = panel.querySelector("#vso-calibrate-first");
+  ui.calibrateSecond = panel.querySelector("#vso-calibrate-second");
+  ui.calibrateReset = panel.querySelector("#vso-calibrate-reset");
+  ui.calibrationStatus = panel.querySelector("#vso-calibration-status");
+  const previewList = globalThis.__VSO_PREVIEW__.createPreviewList(ui.previewList, {
+    formatTime: formatCueTimeLabel,
+    onSelect(index) {
+      state.selectedCueIndex = index;
+      setPreviewAutoFollow(false);
+      ui.selectedCue.textContent = state.cues[index].text;
+      updateCalibrationControls();
+      renderPreview();
+    }
+  });
+  ui.cueSeek.addEventListener("click", () => {
+    const cue = state.cues[state.selectedCueIndex];
+    if (!cue || !state.activeVideo) return;
+    state.activeVideo.currentTime = timing.videoTime(cue.start, currentTiming());
+    renderSubtitle();
+  });
+
+  function updateCalibrationControls() {
+    const hasSelection = Boolean(state.cues[state.selectedCueIndex] && state.activeVideo);
+    ui.cueSeek.disabled = !hasSelection;
+    ui.calibrateNow.disabled = !hasSelection;
+    ui.calibrateFirst.disabled = !hasSelection;
+    ui.calibrateSecond.disabled = !hasSelection || !state.calibrationAnchor;
+    ui.calibrationStatus.textContent = `偏移 ${formatDelayLabel(state.settings.delayMs)} · 时间比例 ${state.timingRate.toFixed(5)}`
+      + (state.calibrationAnchor ? ` · 第一句已标记：${formatCueTimeLabel(state.calibrationAnchor.cue)}，请选择后面的台词` : "");
+  }
+
+  function selectedAnchor() {
+    const cue = state.cues[state.selectedCueIndex];
+    return cue && state.activeVideo ? { cue: cue.start, video: state.activeVideo.currentTime } : null;
+  }
+
+  function applyTiming(value) {
+    const normalized = timing.normalize(value);
+    state.timingRate = normalized.rate;
+    state.settings.delayMs = normalized.delayMs;
+    state.calibrationAnchor = null;
+    syncControls();
+    persistCurrentPageMemory();
+    renderSubtitle();
+  }
+
+  ui.calibrateNow.addEventListener("click", () => {
+    const anchor = selectedAnchor();
+    if (!anchor) return;
+    try {
+      applyTiming(timing.calibrateOne(anchor.cue, anchor.video, state.timingRate));
+      setStatus("已将这句字幕对齐到当前视频时间");
+    } catch (error) { setStatus(error.message); }
+  });
+  ui.calibrateFirst.addEventListener("click", () => {
+    state.calibrationAnchor = selectedAnchor();
+    updateCalibrationControls();
+  });
+  ui.calibrateSecond.addEventListener("click", () => {
+    const second = selectedAnchor();
+    if (!second || !state.calibrationAnchor) return;
+    try {
+      applyTiming(timing.calibrateTwo(state.calibrationAnchor, second));
+      setStatus("已按两句台词校准字幕偏移和时间比例");
+    } catch (error) { setStatus(error.message); }
+  });
+  ui.calibrateReset.addEventListener("click", () => {
+    applyTiming({ rate: 1, delayMs: 0 });
+    setStatus("已重置当前播放器的时间校准");
+  });
 
   function rgbaFromHex(hex, alpha) {
     const clean = hex.replace("#", "");
@@ -395,11 +454,65 @@
     ui.searchFeedback.dataset.tone = tone;
   }
 
-  function saveSettings() {
-    if (!hasChromeStorage) {
-      return;
+  let sharedRevision = 0;
+  let sharedRefreshQueued = false;
+  function saveSettings(patch) {
+    return mutateStorage({ action: "settings.patch", patch });
+  }
+
+  async function mutateStorage(command) {
+    try {
+      await requestBackgroundMessage({ type: "vso-storage-action", ...command });
+      if (state.siteEnabled) queueSharedRefresh();
+      return true;
+    } catch (error) {
+      setStatus(error.message || "保存失败");
+      if (state.siteEnabled) queueSharedRefresh();
+      return false;
     }
-    chrome.storage.local.set({ [STORAGE_KEY]: state.settings });
+  }
+
+  function queueSharedRefresh() {
+    if (sharedRefreshQueued || !state.siteEnabled) return;
+    sharedRefreshQueued = true;
+    queueMicrotask(() => {
+      sharedRefreshQueued = false;
+      if (state.siteEnabled) void loadSharedState();
+    });
+  }
+
+  async function loadSharedState() {
+    const revision = ++sharedRevision;
+    const generation = activationGeneration;
+    try {
+      const { snapshot } = await requestBackgroundMessage({ type: "vso-storage-action", action: "snapshot" });
+      if (revision !== sharedRevision || generation !== activationGeneration || !state.siteEnabled) return;
+      const oldPrivacy = shouldKeepRecords();
+      const localDelay = state.settings.delayMs;
+      state.settings = { ...DEFAULT_SETTINGS, ...snapshot[STORAGE_KEY] };
+      // Appearance and privacy are shared. Timing belongs to this player.
+      if (state.settingsLoaded) state.settings.delayMs = localDelay;
+      state.pageMemory = snapshot[PAGE_MEMORY_STORAGE_KEY] || {};
+      state.history = snapshot[HISTORY_STORAGE_KEY] || [];
+      state.favorites = snapshot[FAVORITES_STORAGE_KEY] || [];
+      state.settingsLoaded = true;
+      state.libraryLoaded = true;
+      if (oldPrivacy && !shouldKeepRecords()) {
+        state.searchKeyword = "";
+        ui.searchInput.value = "";
+      }
+      syncControls();
+      updateCurrentSubtitleDisplay();
+      renderLibrary();
+      renderSubtitle();
+      void restorePageMemoryIfNeeded();
+    } catch (error) {
+      if (generation === activationGeneration && state.siteEnabled) setStatus(error.message || "读取设置失败");
+    }
+  }
+
+  function handleStorageChange(changes, area) {
+    if (area === "local" && [STORAGE_KEY, PAGE_MEMORY_STORAGE_KEY, HISTORY_STORAGE_KEY, FAVORITES_STORAGE_KEY].some((key) => key in changes)) queueSharedRefresh();
   }
 
   function updateSubtitleStyles() {
@@ -424,6 +537,7 @@
     ui.keepRecordsToggle.checked = !shouldKeepRecords();
     updateSubtitleStyles();
     updateHideButtonLabel();
+    updateCalibrationControls();
   }
 
   function updateSearchControls() {
@@ -533,48 +647,8 @@
     return shouldKeepRecordsSetting(state.settings);
   }
 
-  function persistCollection(key, value, onSuccess) {
-    if (!hasChromeStorage) {
-      if (typeof onSuccess === "function") {
-        onSuccess();
-      }
-      return;
-    }
-
-    chrome.storage.local.set({ [key]: value }, () => {
-      if (chrome.runtime?.lastError) {
-        setStatus(chrome.runtime.lastError.message || "保存失败");
-        return;
-      }
-
-      if (typeof onSuccess === "function") {
-        onSuccess();
-      }
-    });
-  }
-
-  function savePageMemory(nextPageMemory) {
-    persistCollection(PAGE_MEMORY_STORAGE_KEY, nextPageMemory, () => {
-      state.pageMemory = nextPageMemory;
-      updateCurrentSubtitleDisplay();
-      renderLibrary();
-    });
-  }
-
-  function saveHistory(nextHistory) {
-    persistCollection(HISTORY_STORAGE_KEY, nextHistory, () => {
-      state.history = nextHistory;
-      updateCurrentSubtitleDisplay();
-      renderLibrary();
-    });
-  }
-
-  function saveFavorites(nextFavorites) {
-    persistCollection(FAVORITES_STORAGE_KEY, nextFavorites, () => {
-      state.favorites = nextFavorites;
-      updateCurrentSubtitleDisplay();
-      renderLibrary();
-    });
+  function savePageRecord(record) {
+    return mutateStorage({ action: "page.upsert", pageUrl: getCurrentPageUrl(), record });
   }
 
   function getCurrentPageMemorySource() {
@@ -592,36 +666,20 @@
       return;
     }
 
-    const nextPageMemory = upsertPageMemoryEntry(
-      state.pageMemory,
-      getCurrentPageUrl(),
-      buildPageMemoryRecord({
-        delayMs: state.settings.delayMs,
-        subtitleSource,
-        updatedAt: Date.now()
-      })
-    );
-
-    savePageMemory(nextPageMemory);
+    void savePageRecord({
+      delayMs: state.settings.delayMs,
+      timingRate: state.timingRate || 1,
+      subtitleSource,
+      updatedAt: Date.now()
+    });
   }
 
   function persistSubtitleUsage(source) {
     state.currentSubtitleSource = source;
     updateCurrentSubtitleDisplay();
-
-    if (!shouldKeepRecords()) {
-      return;
-    }
-
+    if (!shouldKeepRecords()) return;
     persistCurrentPageMemory();
-
-    const nextHistory = upsertSubtitleHistoryEntry(
-      state.history,
-      buildListEntryFromSource(source),
-      50
-    );
-
-    saveHistory(nextHistory);
+    void mutateStorage({ action: "history.upsert", entry: buildListEntryFromSource(source) });
   }
 
   function createRemoteRestoreMessage(source) {
@@ -630,7 +688,7 @@
 
   async function restorePageMemoryIfNeeded() {
     if (
-      state.pageMemoryRestored ||
+      state.pageMemoryRestored || restoreInProgress ||
       !state.settingsLoaded ||
       !state.siteStateLoaded ||
       !state.libraryLoaded ||
@@ -639,18 +697,20 @@
       return;
     }
 
-    state.pageMemoryRestored = true;
     const record = state.pageMemory[getCurrentPageUrl()];
     if (!record) {
+      state.pageMemoryRestored = true;
       return;
     }
 
+    state.timingRate = timing.normalize({ rate: record.timingRate }).rate;
     if (Number.isFinite(record.delayMs)) {
       state.settings.delayMs = record.delayMs;
       syncControls();
     }
 
     if (!record.subtitleSource) {
+      state.pageMemoryRestored = true;
       return;
     }
 
@@ -658,18 +718,27 @@
     updateCurrentSubtitleDisplay();
 
     if (record.subtitleSource.kind === "local") {
+      state.pageMemoryRestored = true;
       setStatus(`已恢复偏移；上次使用本地字幕 ${record.subtitleSource.label}，请重新选择文件`);
       return;
     }
 
     if (!record.subtitleSource.url) {
+      state.pageMemoryRestored = true;
       return;
     }
 
+    restoreInProgress = true;
+    const generation = activationGeneration;
     try {
-      await loadSubtitleUrl(record.subtitleSource.url, record.subtitleSource, createRemoteRestoreMessage);
+      await loadSubtitleUrl(record.subtitleSource.url, record.subtitleSource, createRemoteRestoreMessage, true);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "自动恢复字幕失败");
+      if (generation === activationGeneration) {
+        state.pageMemoryRestored = true;
+        setStatus(error instanceof Error ? error.message : "自动恢复字幕失败");
+      }
+    } finally {
+      if (generation === activationGeneration) restoreInProgress = false;
     }
   }
 
@@ -710,96 +779,49 @@
     ui.loadPanelUrl.classList.toggle("vso-hidden", !urlOpen);
   }
 
-  function loadSettings() {
-    if (!hasChromeStorage) {
-      state.settingsLoaded = true;
-      syncControls();
-      enforcePrivacyOnLoad();
-      void restorePageMemoryIfNeeded();
-      return;
-    }
-    chrome.storage.local.get(STORAGE_KEY, (result) => {
-      if (chrome.runtime?.lastError) {
-        state.settingsLoaded = true;
-        syncControls();
-        enforcePrivacyOnLoad();
-        void restorePageMemoryIfNeeded();
-        return;
-      }
-      state.settings = {
-        ...DEFAULT_SETTINGS,
-        ...(result[STORAGE_KEY] || {})
-      };
-      state.settingsLoaded = true;
-      syncControls();
-      renderSubtitle();
-      enforcePrivacyOnLoad();
-      void restorePageMemoryIfNeeded();
-    });
-  }
-
-  function applySiteEnabled(enabled) {
+  function applySiteEnabled(enabled, pageUrl) {
+    state.sitePageUrl = pageUrl;
+    state.siteStateLoaded = true;
+    if (state.siteEnabled === enabled) return;
     state.siteEnabled = enabled;
-
+    activationGeneration += 1;
     if (!enabled) {
+      subtitleLoadRevision += 1;
+      restoreInProgress = false;
+      activeAbort?.abort();
+      activeAbort = null;
+      observer.disconnect();
+      chrome.storage.onChanged.removeListener(handleStorageChange);
+      sharedRevision += 1;
+      for (const video of boundVideos.keys()) unbindVideo(video);
+      state.videos.clear();
+      state.activeVideo = null;
       state.panelOpen = false;
-      button.classList.add("vso-hidden");
-      panel.classList.add("vso-hidden");
-      subtitleLayer.classList.add("vso-hidden");
+      state.hoverLocked = false;
+      window.clearTimeout(state.previewIgnoreTimer);
+      window.clearTimeout(state.toastTimer);
+      window.clearTimeout(clearAllTimer);
+      clearAllArmed = false;
+      ui.recordsClearAllButton.textContent = "清空全部记录";
+      [button, panel, subtitleLayer, toastLayer].forEach((node) => node.classList.add("vso-hidden"));
       removeUi();
       return;
     }
-
-    syncUiRoot();
+    activeAbort = new AbortController();
+    for (const { target, type, listener, options } of activeListeners) {
+      target.addEventListener(type, listener, {
+        ...(typeof options === "boolean" ? { capture: options } : options),
+        signal: activeAbort.signal
+      });
+    }
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    chrome.storage.onChanged.addListener(handleStorageChange);
+    void loadSharedState();
+    scanVideos();
     refreshActiveVideo();
+    syncUiRoot();
     positionButton();
     renderSubtitle();
-    void restorePageMemoryIfNeeded();
-  }
-
-  function loadSiteState() {
-    const startSiteStateSync = globalThis.__VSO_SITE_STATE__?.startSiteStateSync;
-    if (!startSiteStateSync) {
-      state.siteStateLoaded = true;
-      applySiteEnabled(false);
-      return;
-    }
-    startSiteStateSync(globalThis.chrome, (enabled, pageUrl) => {
-      state.sitePageUrl = pageUrl;
-      state.siteStateLoaded = true;
-      applySiteEnabled(enabled);
-    });
-  }
-
-  function loadLibraryState() {
-    if (!hasChromeStorage) {
-      state.libraryLoaded = true;
-      renderLibrary();
-      enforcePrivacyOnLoad();
-      void restorePageMemoryIfNeeded();
-      return;
-    }
-
-    chrome.storage.local.get(
-      [PAGE_MEMORY_STORAGE_KEY, HISTORY_STORAGE_KEY, FAVORITES_STORAGE_KEY],
-      (result) => {
-        if (chrome.runtime?.lastError) {
-          state.libraryLoaded = true;
-          renderLibrary();
-          enforcePrivacyOnLoad();
-          void restorePageMemoryIfNeeded();
-          return;
-        }
-
-        state.pageMemory = result[PAGE_MEMORY_STORAGE_KEY] || {};
-        state.history = Array.isArray(result[HISTORY_STORAGE_KEY]) ? result[HISTORY_STORAGE_KEY] : [];
-        state.favorites = Array.isArray(result[FAVORITES_STORAGE_KEY]) ? result[FAVORITES_STORAGE_KEY] : [];
-        state.libraryLoaded = true;
-        renderLibrary();
-        enforcePrivacyOnLoad();
-        void restorePageMemoryIfNeeded();
-      }
-    );
   }
 
   function formatTime(seconds) {
@@ -1040,49 +1062,12 @@
   }
 
   function buildPreviewList() {
-    ui.previewList.textContent = "";
-    state.previewItems = state.cues.map((cue) => {
-      const row = document.createElement("button");
-      row.className = "vso-preview-item";
-      row.type = "button";
-
-      const time = document.createElement("div");
-      time.className = "vso-preview-time";
-      time.textContent = formatCueTimeLabel(cue.start);
-
-      const text = document.createElement("div");
-      text.className = "vso-preview-text";
-      text.textContent = cue.text;
-
-      row.addEventListener("click", () => {
-        if (!state.activeVideo) {
-          setStatus("当前没有可跳转的视频");
-          return;
-        }
-
-        const targetTime = getSeekTimeForCue(cue.start, state.settings.delayMs);
-        state.activeVideo.currentTime = targetTime;
-        setStatus(`已跳转到 ${formatTime(targetTime)}`);
-        renderSubtitle();
-      });
-
-      row.append(time, text);
-      ui.previewList.appendChild(row);
-      return row;
-    });
-  }
-
-  function markPreviewCueStates(viewState) {
-    state.previewItems.forEach((item, index) => {
-      const isActive = index === viewState.activeCueIndex;
-      const isRecent = index === viewState.recentCueIndex;
-      const isUpcoming = index === viewState.upcomingCueIndex;
-      item.classList.toggle("vso-preview-item-active", isActive);
-      item.classList.toggle("vso-preview-item-recent", isRecent);
-      item.classList.toggle("vso-preview-item-upcoming", isUpcoming);
-      item.style.setProperty("--vso-gap-progress", isRecent ? String(viewState.gapProgress) : "0");
-      item.style.setProperty("--vso-upcoming-warmth", isUpcoming ? String(viewState.upcomingWarmth) : "0");
-    });
+    previewList.setCues(state.cues);
+    state.selectedCueIndex = -1;
+    state.previewScrollIndex = -1;
+    ui.selectedCue.textContent = "选择一句字幕，可查看全文或跳转。";
+    state.calibrationAnchor = null;
+    updateCalibrationControls();
   }
 
   function setPreviewAutoFollow(enabled) {
@@ -1091,44 +1076,22 @@
   }
 
   function syncPreviewScroll(force = false) {
-    if (state.panelTab !== "preview" || (!force && !state.previewAutoFollow)) {
-      return;
-    }
-
-    const activeItem = state.previewItems[state.previewScrollIndex];
-    if (!activeItem) {
-      return;
-    }
-
-    const targetTop = Math.max(
-      0,
-      activeItem.offsetTop - ui.previewList.clientHeight / 2 + activeItem.offsetHeight / 2
-    );
-
+    if (!state.siteEnabled || !state.panelOpen || state.panelTab !== "preview" || (!force && !state.previewAutoFollow)) return;
     state.previewIgnoreScroll = true;
     window.clearTimeout(state.previewIgnoreTimer);
-
-    if (typeof ui.previewList.scrollTo === "function") {
-      ui.previewList.scrollTo({
-        top: targetTop,
-        behavior: force ? "smooth" : "auto"
-      });
-    } else {
-      ui.previewList.scrollTop = targetTop;
-    }
-
-    state.previewIgnoreTimer = window.setTimeout(() => {
-      state.previewIgnoreScroll = false;
-    }, 120);
+    previewList.scrollToIndex(state.previewScrollIndex);
+    state.previewIgnoreTimer = window.setTimeout(() => { state.previewIgnoreScroll = false; }, 120);
   }
 
   function renderPreview(forceScroll = false) {
+    if (!state.siteEnabled || !state.panelOpen || state.panelTab !== "preview") return;
+    const previousIndex = state.previewScrollIndex;
     const viewState = getSubtitleMenuViewState({
       cues: state.cues,
       activeCueIndex: state.activeCueIndex,
       autoFollow: state.previewAutoFollow,
       currentTime: state.activeVideo
-        ? getPreviewTime(state.activeVideo.currentTime, state.settings.delayMs)
+        ? timing.subtitleTime(state.activeVideo.currentTime, currentTiming())
         : 0
     });
     state.previewScrollIndex = viewState.activeCueIndex >= 0
@@ -1136,10 +1099,6 @@
       : viewState.upcomingCueIndex >= 0
         ? viewState.upcomingCueIndex
         : viewState.recentCueIndex;
-
-    if (state.previewItems.length !== state.cues.length) {
-      buildPreviewList();
-    }
 
     const isEmpty = viewState.mode === "empty";
     ui.previewEmpty.classList.toggle("vso-hidden", !isEmpty);
@@ -1153,10 +1112,8 @@
       return;
     }
 
-    markPreviewCueStates(viewState);
-    if (forceScroll || state.previewAutoFollow) {
-      syncPreviewScroll(forceScroll);
-    }
+    if (forceScroll || (state.previewAutoFollow && previousIndex !== state.previewScrollIndex)) syncPreviewScroll(forceScroll);
+    previewList.render(viewState, state.selectedCueIndex);
   }
 
   function renderSubtitle() {
@@ -1185,10 +1142,11 @@
       return;
     }
 
-    const time = getPreviewTime(video.currentTime, state.settings.delayMs);
+    const time = timing.subtitleTime(video.currentTime, currentTiming());
     state.activeCueIndex = findCueIndexAtTime(state.cues, time);
     const cue = state.activeCueIndex >= 0 ? state.cues[state.activeCueIndex] : null;
-    subtitleBox.textContent = cue ? cue.text : "";
+    const nextText = cue ? cue.text : "";
+    if (subtitleBox.textContent !== nextText) subtitleBox.textContent = nextText;
     subtitleLayer.classList.toggle("vso-hidden", !cue || !state.subtitleVisible);
     renderPreview();
     positionButton();
@@ -1226,23 +1184,32 @@
   function handleVideoLeave() {
     state.hoverLocked = false;
     window.setTimeout(() => {
-      if (!state.hoverLocked) {
+      if (state.siteEnabled && !state.hoverLocked) {
         refreshActiveVideo();
       }
     }, 120);
   }
 
   function attachVideoListeners(video) {
-    if (video.dataset.vsoBound === "1") {
+    if (!activeAbort || boundVideos.has(video)) {
       return;
     }
     video.dataset.vsoBound = "1";
-    video.addEventListener("mouseenter", handleVideoHover);
-    video.addEventListener("mouseleave", handleVideoLeave);
-    video.addEventListener("timeupdate", renderSubtitle);
-    video.addEventListener("seeked", renderSubtitle);
-    video.addEventListener("play", () => setActiveVideo(video));
-    video.addEventListener("pause", renderSubtitle);
+    const videoAbort = new AbortController();
+    boundVideos.set(video, videoAbort);
+    const options = { signal: videoAbort.signal };
+    video.addEventListener("mouseenter", handleVideoHover, options);
+    video.addEventListener("mouseleave", handleVideoLeave, options);
+    video.addEventListener("timeupdate", renderSubtitle, options);
+    video.addEventListener("seeked", renderSubtitle, options);
+    video.addEventListener("play", () => setActiveVideo(video), options);
+    video.addEventListener("pause", renderSubtitle, options);
+  }
+
+  function unbindVideo(video) {
+    boundVideos.get(video)?.abort();
+    boundVideos.delete(video);
+    delete video.dataset.vsoBound;
   }
 
   function registerVideo(video) {
@@ -1260,7 +1227,6 @@
     }
     const videos = root.querySelectorAll ? root.querySelectorAll("video") : [];
     videos.forEach(registerVideo);
-    refreshActiveVideo();
   }
 
   function togglePanel(forceOpen) {
@@ -1581,9 +1547,6 @@
     }
 
     if (entry.kind === "local") {
-      state.currentSubtitleSource = buildSubtitleSource("local", entry.label);
-      updateCurrentSubtitleDisplay();
-      persistCurrentPageMemory();
       setStatus(`这是本地字幕记录 ${entry.label}，请重新选择文件`);
       return;
     }
@@ -1595,139 +1558,64 @@
   }
 
   function toggleFavoriteEntry(entry) {
-    if (!entry) {
-      return;
+    if (!entry) return;
+    const existing = state.favorites.find((favorite) => isSameFavoriteSource(favorite, entry));
+    if (existing) {
+      void mutateStorage({ action: "favorites.remove", id: existing.id });
+    } else {
+      void mutateStorage({ action: "favorites.add", entry: { ...entry, id: createListEntryId("favorite"), createdAt: Date.now() } });
     }
-
-    if (isFavoriteEntry(entry)) {
-      const existing = state.favorites.find((favorite) => isSameFavoriteSource(favorite, entry));
-      if (!existing) {
-        return;
-      }
-      saveFavorites(removeSubtitleListEntry(state.favorites, existing.id));
-      return;
-    }
-
-    saveFavorites(
-      upsertSubtitleFavoriteEntry(state.favorites, {
-        ...entry,
-        id: createListEntryId("favorite"),
-        createdAt: Date.now()
-      })
-    );
   }
 
   function applyKeepRecordsSetting(keepRecords) {
     state.settings.keepRecords = keepRecords === true;
-    saveSettings();
     syncControls();
-
-    if (shouldKeepRecords()) {
-      setStatus("将开始保留最近使用、页面记忆和搜索关键词");
-      return;
+    if (!keepRecords) {
+      state.searchKeyword = "";
+      ui.searchInput.value = "";
     }
-
-    clearStoredRecords({ includeFavorites: true });
-    setStatus("已开启不保留任何记录，并清空已有记录");
+    void saveSettings({ keepRecords: state.settings.keepRecords }).then((saved) => {
+      if (saved) setStatus(keepRecords ? "将开始保留最近使用和页面记忆" : "已开启不保留任何记录，并清空已有记录");
+    });
   }
 
-  // 抹掉已存的记录。includeFavorites 只在用户主动要求时为 true：
-  // 隐私模式自己触发的清理不能连收藏一起抹，否则每次打开页面都会丢掉收藏。
   function clearStoredRecords({ includeFavorites }) {
-    const payload = {
-      [PAGE_MEMORY_STORAGE_KEY]: {},
-      [HISTORY_STORAGE_KEY]: []
-    };
-
-    if (includeFavorites) {
-      payload[FAVORITES_STORAGE_KEY] = [];
-    }
-
+    void mutateStorage({ action: "records.clear", includeFavorites }).then((saved) => {
+      if (saved) setStatus("已清空记录");
+    });
     state.searchKeyword = "";
     ui.searchInput.value = "";
-    state.currentSubtitleSource = null;
-    state.pageMemory = {};
-    state.history = [];
-
-    if (includeFavorites) {
-      state.favorites = [];
-    }
-
-    if (hasChromeStorage) {
-      chrome.storage.local.set(payload, () => {
-        if (chrome.runtime?.lastError) {
-          setStatus(chrome.runtime.lastError.message || "清空记录失败");
-        }
-      });
-    }
-
-    updateCurrentSubtitleDisplay();
-    renderLibrary();
-  }
-
-  // 隐私模式是默认状态，所以升级上来时把之前留下的历史和页面记忆也清掉。
-  // 要等设置和记录都读回来才知道有没有东西可清，而且只在真有记录时写一次存储。
-  function enforcePrivacyOnLoad() {
-    if (state.privacyEnforced || !state.settingsLoaded || !state.libraryLoaded) {
-      return;
-    }
-
-    state.privacyEnforced = true;
-
-    if (shouldKeepRecords()) {
-      return;
-    }
-
-    const hasStoredRecords =
-      Object.keys(state.pageMemory).length > 0 || state.history.length > 0;
-
-    if (!hasStoredRecords) {
-      return;
-    }
-
-    clearStoredRecords({ includeFavorites: false });
   }
 
   function clearCurrentPageMemory() {
-    const pageUrl = getCurrentPageUrl();
-    const nextPageMemory = { ...state.pageMemory };
-    delete nextPageMemory[pageUrl];
-    persistCollection(PAGE_MEMORY_STORAGE_KEY, nextPageMemory, () => {
-      state.pageMemory = nextPageMemory;
-      state.currentSubtitleSource = null;
-      updateCurrentSubtitleDisplay();
-      renderLibrary();
-      setStatus("已清除当前页面记忆");
+    void mutateStorage({ action: "page.remove", pageUrl: getCurrentPageUrl() }).then((saved) => {
+      if (saved) setStatus("已清除当前页面记忆");
     });
   }
 
   function clearCurrentSubtitle() {
+    subtitleLoadRevision += 1;
+    state.pageMemoryRestored = true;
+    state.settings.delayMs = 0;
+    state.timingRate = 1;
+    state.calibrationAnchor = null;
     state.cues = [];
     state.activeCueIndex = -1;
-    state.previewItems = [];
+    buildPreviewList();
     state.previewAutoFollow = true;
     state.subtitleVisible = true;
     state.currentSubtitleSource = null;
     subtitleBox.textContent = "";
     subtitleLayer.classList.add("vso-hidden");
     updateHideButtonLabel();
+    syncControls();
 
     const pageUrl = getCurrentPageUrl();
     const existingRecord = state.pageMemory[pageUrl];
 
     // 隐私模式下不写任何页面记忆，包括这条「已清空」的记录。
     if (shouldKeepRecords()) {
-      const nextPageMemory = upsertPageMemoryEntry(
-        state.pageMemory,
-        pageUrl,
-        buildPageMemoryRecord({
-          delayMs: state.settings.delayMs,
-          subtitleSource: null,
-          updatedAt: Date.now()
-        })
-      );
-
-      savePageMemory(nextPageMemory);
+      void savePageRecord({ delayMs: state.settings.delayMs, timingRate: state.timingRate || 1, subtitleSource: null, updatedAt: Date.now() });
     }
 
     setStatus(existingRecord?.subtitleSource ? "已清空当前字幕" : "当前没有可清空的字幕");
@@ -1754,9 +1642,9 @@
 
     if (action === "delete") {
       if (listType === "favorites") {
-        saveFavorites(removeSubtitleListEntry(state.favorites, entryId));
+        void mutateStorage({ action: "favorites.remove", id: entryId });
       } else {
-        saveHistory(removeSubtitleListEntry(state.history, entryId));
+        void mutateStorage({ action: "history.remove", id: entryId });
       }
     }
   }
@@ -1800,7 +1688,11 @@
   }
 
   async function loadSubtitleFile(file) {
+    const revision = ++subtitleLoadRevision;
+    state.pageMemoryRestored = true;
+    const generation = activationGeneration;
     const content = await file.text();
+    if (!state.siteEnabled || generation !== activationGeneration || revision !== subtitleLoadRevision) return;
     return loadSubtitleContent(
       file.name,
       content,
@@ -1818,7 +1710,13 @@
       throw new Error("字幕文件解析后没有可用条目");
     }
 
+    if (state.currentSubtitleSource && source && !isSameFavoriteSource(state.currentSubtitleSource, source)) {
+      state.timingRate = 1;
+      state.settings.delayMs = 0;
+    }
+    state.pageMemoryRestored = true;
     state.cues = cues;
+    syncControls();
     state.activeCueIndex = -1;
     state.previewAutoFollow = true;
     state.subtitleVisible = true;
@@ -1840,15 +1738,19 @@
     }).then((response) => response.content);
   }
 
-  async function loadSubtitleUrl(url, source = null, buildSuccessMessage = null) {
+  async function loadSubtitleUrl(url, source = null, buildSuccessMessage = null, restoring = false) {
     const trimmedUrl = String(url || "").trim();
 
     if (!trimmedUrl) {
       throw new Error("请输入字幕链接");
     }
 
+    const revision = ++subtitleLoadRevision;
+    if (!restoring) state.pageMemoryRestored = true;
     setStatus("正在下载字幕...");
+    const generation = activationGeneration;
     const content = await requestSubtitleDownload(trimmedUrl);
+    if (!state.siteEnabled || generation !== activationGeneration || revision !== subtitleLoadRevision) return;
     const sourceName = getSubtitleFilenameFromUrl(trimmedUrl);
     const subtitleSource = source || buildSubtitleSource("remote", sourceName, trimmedUrl);
 
@@ -1865,7 +1767,6 @@
   function adjustDelay(deltaMs) {
     state.settings.delayMs += deltaMs;
     syncControls();
-    saveSettings();
     persistCurrentPageMemory();
     setStatus(`当前字幕偏移 ${formatDelayLabel(state.settings.delayMs)}`);
     renderSubtitle();
@@ -1874,7 +1775,10 @@
   function resetSettings() {
     const wasKeepingRecords = shouldKeepRecords();
     state.settings = { ...DEFAULT_SETTINGS };
-    saveSettings();
+    state.timingRate = 1;
+    state.calibrationAnchor = null;
+    const { delayMs, ...sharedDefaults } = DEFAULT_SETTINGS;
+    void saveSettings(sharedDefaults);
     syncControls();
     renderSubtitle();
 
@@ -1893,7 +1797,7 @@
 
   button.addEventListener("click", () => togglePanel());
 
-  document.addEventListener("pointerdown", (event) => {
+  listenActive(document, "pointerdown", (event) => {
     const target = event.target;
     if (!(target instanceof Node)) {
       return;
@@ -2035,27 +1939,27 @@
   ui.textColor.addEventListener("input", () => {
     state.settings.textColor = ui.textColor.value;
     updateSubtitleStyles();
-    saveSettings();
+    void saveSettings({ textColor: state.settings.textColor });
   });
 
   ui.bgColor.addEventListener("input", () => {
     state.settings.backgroundColor = ui.bgColor.value;
     updateSubtitleStyles();
-    saveSettings();
+    void saveSettings({ backgroundColor: state.settings.backgroundColor });
   });
 
   ui.bgOpacity.addEventListener("input", () => {
     state.settings.backgroundOpacity = Number.parseFloat(ui.bgOpacity.value);
     ui.bgOpacityValue.textContent = `${Math.round(state.settings.backgroundOpacity * 100)}%`;
     updateSubtitleStyles();
-    saveSettings();
+    void saveSettings({ backgroundOpacity: state.settings.backgroundOpacity });
   });
 
   ui.fontSize.addEventListener("input", () => {
     state.settings.fontSize = Number.parseInt(ui.fontSize.value, 10);
     ui.fontSizeValue.textContent = `${state.settings.fontSize}px`;
     updateSubtitleStyles();
-    saveSettings();
+    void saveSettings({ fontSize: state.settings.fontSize });
     renderSubtitle();
   });
 
@@ -2105,15 +2009,15 @@
 
   ui.previewResumeButton.addEventListener("click", () => {
     setPreviewAutoFollow(true);
-    syncPreviewScroll(true);
+    renderPreview(true);
   });
 
   ui.previewList.addEventListener("scroll", () => {
-    if (state.previewIgnoreScroll) {
-      return;
-    }
-    setPreviewAutoFollow(false);
+    if (!state.previewIgnoreScroll) setPreviewAutoFollow(false);
+    renderPreview();
   });
+  ui.previewList.addEventListener("wheel", () => setPreviewAutoFollow(false), { passive: true });
+  ui.previewList.addEventListener("touchstart", () => setPreviewAutoFollow(false), { passive: true });
 
   ui.historyList.addEventListener("click", (event) => {
     const target = event.target;
@@ -2154,12 +2058,12 @@
   });
 
   ui.historyClearButton.addEventListener("click", () => {
-    saveHistory(clearSubtitleList(state.history));
+    void mutateStorage({ action: "history.clear" });
     setStatus("已清空历史");
   });
 
   ui.favoritesClearButton.addEventListener("click", () => {
-    saveFavorites(clearSubtitleList(state.favorites));
+    void mutateStorage({ action: "favorites.clear" });
     setStatus("已清空收藏");
   });
 
@@ -2204,7 +2108,7 @@
 
   ui.resetButton.addEventListener("click", resetSettings);
 
-  window.addEventListener("scroll", (event) => {
+  listenActive(window, "scroll", (event) => {
     const target = event.target;
     if (target instanceof Node && panel.contains(target)) {
       return;
@@ -2214,50 +2118,50 @@
     renderSubtitle();
   }, true);
 
-  window.addEventListener("resize", () => {
+  listenActive(window, "resize", () => {
     positionButton();
     renderSubtitle();
   });
 
-  document.addEventListener("fullscreenchange", () => {
+  listenActive(document, "fullscreenchange", () => {
     syncUiRoot();
     positionButton();
     renderSubtitle();
   });
 
-  document.addEventListener("webkitfullscreenchange", () => {
+  listenActive(document, "webkitfullscreenchange", () => {
     syncUiRoot();
     positionButton();
     renderSubtitle();
   });
 
-  document.addEventListener("keydown", handleShortcut);
+  listenActive(document, "keydown", handleShortcut);
 
   const observer = new MutationObserver((mutations) => {
+    if (!state.siteEnabled) return;
+    let changed = false;
     for (const mutation of mutations) {
+      if ([button, panel, subtitleLayer, toastLayer].some((node) => node === mutation.target || node.contains(mutation.target))) continue;
       mutation.addedNodes.forEach((node) => scanVideos(node));
-      mutation.removedNodes.forEach((node) => {
-        if (node === state.activeVideo || (node instanceof Element && state.activeVideo && node.contains(state.activeVideo))) {
-          state.activeVideo = null;
-        }
-      });
+      changed = true;
+    }
+    if (!changed) return;
+    for (const video of state.videos) {
+      if (!document.contains(video)) {
+        unbindVideo(video);
+        state.videos.delete(video);
+        if (video === state.activeVideo) state.activeVideo = null;
+      }
     }
     refreshActiveVideo();
   });
 
-  observer.observe(document.documentElement, {
-    childList: true,
-    subtree: true
-  });
-
-  loadSettings();
-  loadSiteState();
-  loadLibraryState();
-  scanVideos();
   updateSearchControls();
   renderSearchResults();
   renderLibrary();
   updateCurrentSubtitleDisplay();
   setLoadDisclosure("");
   setPanelTab("load");
+  return { setEnabled: applySiteEnabled };
+  }
 })();

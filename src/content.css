@@ -570,11 +570,19 @@
   max-height: 240px;
   min-height: 240px;
   overflow: auto;
-  display: grid;
-  gap: 8px;
+  display: block;
+  position: relative;
+  overflow-anchor: none;
   padding-right: 4px;
   margin-bottom: 10px;
 }
+
+.vso-preview-canvas { position: relative; width: 100%; }
+.vso-preview-canvas .vso-preview-item { position: absolute; height: 64px; left: 0; }
+.vso-preview-canvas .vso-preview-text { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.vso-preview-item-selected { outline: 2px solid #7dd3fc; outline-offset: -2px; }
+.vso-selected-cue { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 140px; overflow-y: auto; font-size: 13px; line-height: 1.5; margin: 8px 0; }
+.vso-calibration-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 8px 0; }
 
 .vso-preview-item {
   display: grid;

@@ -2,6 +2,8 @@ import "./release-utils.test.mjs";
 import "./fullscreen-ui-root.test.mjs";
 import "./site-toggle.test.mjs";
 import "./iframe-site-state.test.mjs";
+import "./timing.test.mjs";
+import "./storage-service.test.mjs";
 import "./subtitle-source.test.mjs";
 import "./subtitle-preview.test.mjs";
 import "./long-subtitle.test.mjs";
